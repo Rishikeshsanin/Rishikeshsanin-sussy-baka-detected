@@ -57,14 +57,10 @@ function answerLikelihood(answer: AnswerType, expected: boolean | null): number 
   if (answer === "unknown" || expected === null) return 0.5;
 
   switch (answer) {
-    case "yes":
-      return expected ? 0.94 : 0.06;
-    case "no":
-      return expected ? 0.06 : 0.94;
-    case "probably":
-      return expected ? 0.74 : 0.26;
-    case "probably_not":
-      return expected ? 0.26 : 0.74;
+    case "yes": return expected ? 0.94 : 0.06;
+    case "no": return expected ? 0.06 : 0.94;
+    case "probably": return expected ? 0.74 : 0.26;
+    case "probably_not": return expected ? 0.26 : 0.74;
   }
 }
 
@@ -83,11 +79,6 @@ export function candidateHasTag(candidate: CandidateProfile, tag: string): boole
   return (DERIVED_TAGS[tag] ?? []).some((sourceTag) => candidate.tags.includes(sourceTag));
 }
 
-/**
- * Live Wikimedia candidates use an open-world model: a missing extracted tag is
- * usually "unknown", not proof that the trait is false. Bundled seed candidates
- * are curated densely enough to keep the original closed-world behavior.
- */
 function traitExpectation(candidate: CandidateProfile, tag: string): boolean | null {
   if (candidateHasTag(candidate, tag)) return true;
 
@@ -96,15 +87,12 @@ function traitExpectation(candidate: CandidateProfile, tag: string): boolean | n
 
   for (const group of EXCLUSIVE_GROUPS) {
     if (!group.includes(tag)) continue;
-    if (group.some((other) => other !== tag && candidateHasTag(candidate, other))) {
-      return false;
-    }
+    if (group.some((other) => other !== tag && candidateHasTag(candidate, other))) return false;
   }
 
   if (tag === "born_after_2000" && candidateHasTag(candidate, "born_before_1980")) return false;
   if (tag === "alive" && candidateHasTag(candidate, "historical")) return false;
   if (tag === "historical" && candidateHasTag(candidate, "alive")) return false;
-
   return null;
 }
 
@@ -127,10 +115,7 @@ export function mergeCandidatePools(
         ...existing,
         tags: [...new Set([...existing.tags, ...candidate.tags])],
         prior: Math.max(existing.prior ?? 1, candidate.prior ?? 1),
-        popularityScore: Math.max(
-          existing.popularityScore ?? 0,
-          candidate.popularityScore ?? 0,
-        ),
+        popularityScore: Math.max(existing.popularityScore ?? 0, candidate.popularityScore ?? 0),
         source: existing.source === "seed" ? "seed" : candidate.source ?? existing.source,
         sourceId: existing.sourceId ?? candidate.sourceId,
         wikipediaTitle: existing.wikipediaTitle ?? candidate.wikipediaTitle,
@@ -142,9 +127,7 @@ export function mergeCandidatePools(
   return [...merged.values()];
 }
 
-interface ScoringQuestion {
-  tag: string;
-}
+interface ScoringQuestion { tag: string; }
 
 function baseQuestionId(questionId: string): string {
   return parseConfirmationQuestionId(questionId)?.baseQuestionId ?? questionId;
@@ -170,36 +153,24 @@ export function analyzeCandidates(
     .map((candidate) => {
       let logScore = Math.log(Math.max(candidate.prior ?? 1, 0.05));
       for (const { answer, question } of recognized) {
-        const expected = traitExpectation(candidate, question.tag);
-        logScore += Math.log(answerLikelihood(answer.answer, expected) + EPSILON);
+        logScore += Math.log(answerLikelihood(answer.answer, traitExpectation(candidate, question.tag)) + EPSILON);
       }
       return { candidate, logScore };
     });
 
   if (scored.length === 0) {
     return {
-      ranked: [],
-      recognizedAnswers: recognized.length,
+      ranked: [], recognizedAnswers: recognized.length,
       unknownAnswers: history.filter((entry) => entry.answer === "unknown").length,
-      topProbability: 0,
-      runnerUpProbability: 0,
-      margin: 0,
-      confidence: 0,
+      topProbability: 0, runnerUpProbability: 0, margin: 0, confidence: 0,
     };
   }
 
   const maxLog = Math.max(...scored.map((item) => item.logScore));
-  const exponentiated = scored.map((item) => ({
-    candidate: item.candidate,
-    score: Math.exp(item.logScore - maxLog),
-  }));
+  const exponentiated = scored.map((item) => ({ candidate: item.candidate, score: Math.exp(item.logScore - maxLog) }));
   const denominator = exponentiated.reduce((sum, item) => sum + item.score, 0) || 1;
-
   const ranked = exponentiated
-    .map((item) => ({
-      ...item,
-      probability: item.score / denominator,
-    }))
+    .map((item) => ({ ...item, probability: item.score / denominator }))
     .sort((a, b) => b.probability - a.probability);
 
   const topProbability = ranked[0]?.probability ?? 0;
@@ -207,19 +178,12 @@ export function analyzeCandidates(
   const margin = Math.max(0, topProbability - runnerUpProbability);
   const evidenceFactor = clamp(recognized.length / 12);
   const unknownPenalty = clamp(history.filter((entry) => entry.answer === "unknown").length / 10) * 0.16;
-
-  const confidence = clamp(
-    topProbability * 0.72 + margin * 0.34 + evidenceFactor * 0.18 - unknownPenalty,
-  );
+  const confidence = clamp(topProbability * 0.72 + margin * 0.34 + evidenceFactor * 0.18 - unknownPenalty);
 
   return {
-    ranked,
-    recognizedAnswers: recognized.length,
+    ranked, recognizedAnswers: recognized.length,
     unknownAnswers: history.filter((entry) => entry.answer === "unknown").length,
-    topProbability,
-    runnerUpProbability,
-    margin,
-    confidence,
+    topProbability, runnerUpProbability, margin, confidence,
   };
 }
 
@@ -245,28 +209,23 @@ export function selectBestQuestion(
 
   for (const question of TRAIT_QUESTIONS) {
     if (askedIds.has(question.id) || !isTraitQuestionApplicable(question, history)) continue;
-
     const yesProbability = analysis.ranked.reduce((sum, item) => {
       const expectation = traitExpectation(item.candidate, question.tag);
-      const yesChance = expectation === null ? 0.5 : expectation ? 1 : 0;
-      return sum + item.probability * yesChance;
+      return sum + item.probability * (expectation === null ? 0.5 : expectation ? 1 : 0);
     }, 0);
-
     if (yesProbability <= 0.045 || yesProbability >= 0.955) continue;
 
     const informationGain = binaryEntropy(yesProbability);
-    if (!best || informationGain > best.informationGain + 1e-9) {
-      best = { question, informationGain };
-    }
+    if (!best || informationGain > best.informationGain + 1e-9) best = { question, informationGain };
   }
 
   return best && best.informationGain >= 0.28 ? best : null;
 }
 
 /**
- * Once SBD has a strong lead, ask evidence that the leading candidate is expected
- * to satisfy but meaningful alternatives may not. The custom ID lets the guess
- * policy require two affirmative confirmations without exposing the candidate.
+ * Ask a fact for which the leading candidate has a known expected answer and
+ * close alternatives disagree. Both a correctly expected YES and a correctly
+ * expected NO count as confirmation.
  */
 export function selectConfirmationQuestion(
   history: readonly GameAnswer[],
@@ -278,27 +237,35 @@ export function selectConfirmationQuestion(
   if (!top) return null;
 
   const askedIds = askedBaseQuestionIds(history);
-  let best: { question: TraitQuestion; informationGain: number; score: number } | null = null;
+  let best: {
+    question: TraitQuestion;
+    informationGain: number;
+    score: number;
+    expectedAnswer: boolean;
+  } | null = null;
 
   for (const question of TRAIT_QUESTIONS) {
     if (askedIds.has(question.id) || !isTraitQuestionApplicable(question, history)) continue;
-    if (traitExpectation(top.candidate, question.tag) !== true) continue;
+    const topExpectation = traitExpectation(top.candidate, question.tag);
+    if (topExpectation === null) continue;
 
-    let opposingWeight = 0;
+    let disagreementWeight = 0;
     const yesProbability = analysis.ranked.reduce((sum, item, index) => {
       const expectation = traitExpectation(item.candidate, question.tag);
       const yesChance = expectation === null ? 0.5 : expectation ? 1 : 0;
       if (index > 0) {
-        opposingWeight += item.probability * (expectation === false ? 1 : expectation === null ? 0.35 : 0);
+        disagreementWeight += item.probability * (
+          expectation === null ? 0.3 : expectation !== topExpectation ? 1 : 0
+        );
       }
       return sum + item.probability * yesChance;
     }, 0);
 
-    if (opposingWeight < 0.035) continue;
+    if (disagreementWeight < 0.035) continue;
     const informationGain = binaryEntropy(yesProbability);
-    const score = informationGain + opposingWeight * 0.55;
+    const score = informationGain + disagreementWeight * 0.55;
     if (!best || score > best.score + 1e-9) {
-      best = { question, informationGain, score };
+      best = { question, informationGain, score, expectedAnswer: topExpectation };
     }
   }
 
@@ -308,7 +275,7 @@ export function selectConfirmationQuestion(
     informationGain: best.informationGain,
     question: {
       ...best.question,
-      id: makeConfirmationQuestionId(top.candidate.name, best.question.id),
+      id: makeConfirmationQuestionId(top.candidate.name, best.question.id, best.expectedAnswer),
     },
   };
 }
