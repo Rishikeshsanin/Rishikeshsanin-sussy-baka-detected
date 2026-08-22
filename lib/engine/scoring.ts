@@ -1,8 +1,17 @@
 import type { AnswerType, GameAnswer } from "@/lib/game/types";
+import {
+  makeConfirmationQuestionId,
+  parseConfirmationQuestionId,
+} from "@/lib/game/guess-policy";
 
 import { CANDIDATES, type CandidateProfile } from "./candidates";
 import { EXTRA_CANDIDATES } from "./extra-candidates";
-import { QUESTION_BY_ID, TRAIT_QUESTIONS, type TraitQuestion } from "./questions";
+import {
+  isTraitQuestionApplicable,
+  QUESTION_BY_ID,
+  TRAIT_QUESTIONS,
+  type TraitQuestion,
+} from "./questions";
 import { RECOVERY_QUESTION_BY_ID } from "./recovery-question";
 
 export interface RankedCandidate {
@@ -99,10 +108,6 @@ function traitExpectation(candidate: CandidateProfile, tag: string): boolean | n
   return null;
 }
 
-/**
- * Merge candidate pools without allowing live discovery to duplicate a bundled
- * seed candidate. The higher prior wins and structured tags are unioned.
- */
 export function mergeCandidatePools(
   ...pools: readonly (readonly CandidateProfile[])[]
 ): CandidateProfile[] {
@@ -141,8 +146,13 @@ interface ScoringQuestion {
   tag: string;
 }
 
+function baseQuestionId(questionId: string): string {
+  return parseConfirmationQuestionId(questionId)?.baseQuestionId ?? questionId;
+}
+
 function scoringQuestionForId(questionId: string): ScoringQuestion | undefined {
-  return QUESTION_BY_ID.get(questionId) ?? RECOVERY_QUESTION_BY_ID.get(questionId);
+  const id = baseQuestionId(questionId);
+  return QUESTION_BY_ID.get(id) ?? RECOVERY_QUESTION_BY_ID.get(id);
 }
 
 export function analyzeCandidates(
@@ -198,8 +208,6 @@ export function analyzeCandidates(
   const evidenceFactor = clamp(recognized.length / 12);
   const unknownPenalty = clamp(history.filter((entry) => entry.answer === "unknown").length / 10) * 0.16;
 
-  // This is a game-confidence heuristic derived from the posterior distribution,
-  // margin, and amount of structured evidence. It is never supplied by an LLM.
   const confidence = clamp(
     topProbability * 0.72 + margin * 0.34 + evidenceFactor * 0.18 - unknownPenalty,
   );
@@ -220,6 +228,10 @@ function binaryEntropy(probability: number): number {
   return -(p * Math.log2(p) + (1 - p) * Math.log2(1 - p));
 }
 
+function askedBaseQuestionIds(history: readonly GameAnswer[]): Set<string> {
+  return new Set(history.map((entry) => baseQuestionId(entry.questionId)));
+}
+
 export function selectBestQuestion(
   history: readonly GameAnswer[],
   rejectedGuesses: readonly string[] = [],
@@ -228,11 +240,11 @@ export function selectBestQuestion(
   const analysis = analyzeCandidates(history, rejectedGuesses, candidates);
   if (analysis.ranked.length < 2) return null;
 
-  const askedIds = new Set(history.map((entry) => entry.questionId));
+  const askedIds = askedBaseQuestionIds(history);
   let best: { question: TraitQuestion; informationGain: number } | null = null;
 
   for (const question of TRAIT_QUESTIONS) {
-    if (askedIds.has(question.id)) continue;
+    if (askedIds.has(question.id) || !isTraitQuestionApplicable(question, history)) continue;
 
     const yesProbability = analysis.ranked.reduce((sum, item) => {
       const expectation = traitExpectation(item.candidate, question.tag);
@@ -240,7 +252,6 @@ export function selectBestQuestion(
       return sum + item.probability * yesChance;
     }, 0);
 
-    // Avoid nearly-certain questions; they add little information and feel repetitive.
     if (yesProbability <= 0.045 || yesProbability >= 0.955) continue;
 
     const informationGain = binaryEntropy(yesProbability);
@@ -250,6 +261,56 @@ export function selectBestQuestion(
   }
 
   return best && best.informationGain >= 0.28 ? best : null;
+}
+
+/**
+ * Once SBD has a strong lead, ask evidence that the leading candidate is expected
+ * to satisfy but meaningful alternatives may not. The custom ID lets the guess
+ * policy require two affirmative confirmations without exposing the candidate.
+ */
+export function selectConfirmationQuestion(
+  history: readonly GameAnswer[],
+  rejectedGuesses: readonly string[] = [],
+  candidates: readonly CandidateProfile[] = SEED_CANDIDATES,
+): { question: TraitQuestion; informationGain: number; candidateName: string } | null {
+  const analysis = analyzeCandidates(history, rejectedGuesses, candidates);
+  const top = analysis.ranked[0];
+  if (!top) return null;
+
+  const askedIds = askedBaseQuestionIds(history);
+  let best: { question: TraitQuestion; informationGain: number; score: number } | null = null;
+
+  for (const question of TRAIT_QUESTIONS) {
+    if (askedIds.has(question.id) || !isTraitQuestionApplicable(question, history)) continue;
+    if (traitExpectation(top.candidate, question.tag) !== true) continue;
+
+    let opposingWeight = 0;
+    const yesProbability = analysis.ranked.reduce((sum, item, index) => {
+      const expectation = traitExpectation(item.candidate, question.tag);
+      const yesChance = expectation === null ? 0.5 : expectation ? 1 : 0;
+      if (index > 0) {
+        opposingWeight += item.probability * (expectation === false ? 1 : expectation === null ? 0.35 : 0);
+      }
+      return sum + item.probability * yesChance;
+    }, 0);
+
+    if (opposingWeight < 0.035) continue;
+    const informationGain = binaryEntropy(yesProbability);
+    const score = informationGain + opposingWeight * 0.55;
+    if (!best || score > best.score + 1e-9) {
+      best = { question, informationGain, score };
+    }
+  }
+
+  if (!best) return null;
+  return {
+    candidateName: top.candidate.name,
+    informationGain: best.informationGain,
+    question: {
+      ...best.question,
+      id: makeConfirmationQuestionId(top.candidate.name, best.question.id),
+    },
+  };
 }
 
 export function topCandidateNames(analysis: CandidateAnalysis, limit = 8): string[] {
