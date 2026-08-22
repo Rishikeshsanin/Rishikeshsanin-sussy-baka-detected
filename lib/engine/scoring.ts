@@ -225,7 +225,9 @@ export function selectBestQuestion(
 /**
  * Ask a fact for which the leading candidate has a known expected answer and
  * close alternatives disagree. Both a correctly expected YES and a correctly
- * expected NO count as confirmation.
+ * expected NO count as confirmation. Once the first confirmation makes the lead
+ * overwhelming, a second low-entropy sanity check is still preferable to an
+ * immediate reveal because it avoids spending a failed guess on a brittle clue.
  */
 export function selectConfirmationQuestion(
   history: readonly GameAnswer[],
@@ -261,8 +263,10 @@ export function selectConfirmationQuestion(
       return sum + item.probability * yesChance;
     }, 0);
 
-    if (disagreementWeight < 0.035) continue;
     const informationGain = binaryEntropy(yesProbability);
+    // Prefer actual separators, but never make "the lead is already too strong"
+    // a reason to skip the second confirmation. The tiny entropy bonus also keeps
+    // a remaining sanity-check fact above a completely universal trait.
     const score = informationGain + disagreementWeight * 0.55;
     if (!best || score > best.score + 1e-9) {
       best = { question, informationGain, score, expectedAnswer: topExpectation };
