@@ -4,12 +4,24 @@ import { getAITurnTimeoutMs, getConfiguredAIProvider } from "@/lib/ai/config.ser
 import { createMaxQuestionsGiveUp, playValidatedTurn } from "@/lib/ai/provider";
 import { MAX_QUESTIONS, MAX_REQUEST_BYTES, TurnRequestSchema } from "@/lib/ai/schema";
 import { AIError, type AIErrorCode, type APIErrorBody } from "@/lib/ai/types";
+import { FixedWindowRateLimiter, getRequestIdentity } from "@/lib/server/rate-limit";
 
 export const runtime = "nodejs";
 
 const inFlightGameIds = new Set<string>();
+const turnRateLimiter = new FixedWindowRateLimiter(45, 60_000);
 
 export async function POST(request: Request): Promise<Response> {
+  const rateLimit = turnRateLimiter.consume(getRequestIdentity(request));
+  if (!rateLimit.allowed) {
+    return errorResponse(
+      "RATE_LIMITED",
+      "Too many detector turns at once. Give it a few seconds and try again.",
+      429,
+      { "retry-after": String(rateLimit.retryAfterSeconds) },
+    );
+  }
+
   let body: unknown;
   try {
     body = await readBoundedJsonBody(request);
@@ -123,18 +135,24 @@ async function readBoundedJsonBody(request: Request): Promise<unknown> {
   }
 }
 
-function errorResponse(code: AIErrorCode, message: string, status: number): Response {
+function errorResponse(
+  code: AIErrorCode,
+  message: string,
+  status: number,
+  extraHeaders?: HeadersInit,
+): Response {
   const body: APIErrorBody = { error: { code, message } };
   return Response.json(body, {
     status,
-    headers: responseHeaders(),
+    headers: responseHeaders(extraHeaders),
   });
 }
 
-function responseHeaders(): HeadersInit {
+function responseHeaders(extraHeaders?: HeadersInit): HeadersInit {
   return {
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
+    ...extraHeaders,
   };
 }
 
