@@ -21,13 +21,11 @@ export const metadata: Metadata = {
     title: "Sussy Baka Detected",
     description: "Think of someone. Don’t snitch. Let the detector cook.",
     type: "website",
-    images: [{ url: "/og.png", alt: "Sussy Baka Detected — AI guessing game" }],
   },
   twitter: {
     card: "summary_large_image",
     title: "Sussy Baka Detected",
     description: "Think of someone. Don’t snitch. Let the detector cook.",
-    images: ["/og.png"],
   },
 };
 
