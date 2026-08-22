@@ -142,7 +142,7 @@ export class HybridProvider implements AIProvider {
       return {
         type: "give_up",
         message: "My live lookup is taking a nap and I used every useful local clue. You got me — who were you thinking of?",
-        confidence: analysis.confidence,
+        confidence: 0,
         memorySummary,
       };
     }
