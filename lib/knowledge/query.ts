@@ -19,10 +19,14 @@ const SEARCH_TERMS: Record<string, string> = {
   man: "male",
   woman: "female",
   alive: "living",
+  asia: "Asian",
+  europe: "European",
+  north_america: "North American",
+  south_america: "South American",
+  africa: "African",
+  oceania: "Oceania",
   india: "Indian",
   usa: "American",
-  europe: "European",
-  south_america: "South American",
   australia: "Australian",
   uk: "British",
   new_zealand: "New Zealand",
@@ -31,9 +35,13 @@ const SEARCH_TERMS: Record<string, string> = {
   sri_lanka: "Sri Lankan",
   bangladesh: "Bangladeshi",
   west_indies: "West Indian",
+  japan: "Japanese",
+  korea: "South Korean",
+  canada: "Canadian",
   sports: "athlete",
   cricket: "cricketer",
   bowler: "bowler",
+  fast_bowler: "fast bowler",
   batter: "batter",
   all_rounder: "all-rounder",
   captain: "captain",
@@ -62,7 +70,6 @@ const SEARCH_TERMS: Record<string, string> = {
   comics: "comics",
   books: "novel character",
   anime: "anime character",
-  japan: "Japanese",
   video_game: "video game character",
   animated: "animated character",
   cartoon: "cartoon character",
@@ -78,6 +85,7 @@ const SEARCH_TERMS: Record<string, string> = {
 };
 
 const QUERY_PRIORITY = [
+  // Specific geography before broad regions.
   "australia",
   "india",
   "usa",
@@ -88,6 +96,17 @@ const QUERY_PRIORITY = [
   "sri_lanka",
   "bangladesh",
   "west_indies",
+  "japan",
+  "korea",
+  "canada",
+  "asia",
+  "europe",
+  "north_america",
+  "south_america",
+  "africa",
+  "oceania",
+
+  // Strong domains / franchises.
   "tollywood",
   "bollywood",
   "hollywood",
@@ -113,7 +132,10 @@ const QUERY_PRIORITY = [
   "star_wars",
   "cartoon",
   "books",
+
+  // Late discriminators.
   "captain",
+  "fast_bowler",
   "bowler",
   "batter",
   "all_rounder",
@@ -149,16 +171,21 @@ const SPECIFIC_TAGS = new Set([
   "cartoon",
   "books",
   "captain",
+  "fast_bowler",
   "bowler",
   "batter",
   "all_rounder",
 ]);
 
 const LOCATION_TAGS = new Set([
+  "asia",
+  "europe",
+  "north_america",
+  "south_america",
+  "africa",
+  "oceania",
   "india",
   "usa",
-  "europe",
-  "south_america",
   "australia",
   "uk",
   "new_zealand",
@@ -167,6 +194,9 @@ const LOCATION_TAGS = new Set([
   "sri_lanka",
   "bangladesh",
   "west_indies",
+  "japan",
+  "korea",
+  "canada",
 ]);
 
 function isPositive(answer: AnswerType | undefined): boolean {
@@ -276,7 +306,7 @@ export function buildKnowledgeSearchPlan(
 
   if (expectsFictionalCharacter === true && !terms.some((term) => /character/i.test(term))) {
     terms.push("fictional character");
-  } else if (expectsRealPerson === true && !terms.some((term) => /person|athlete|player|cricketer|actor|musician|politician|scientist|footballer/i.test(term))) {
+  } else if (expectsRealPerson === true && !terms.some((term) => /person|athlete|player|cricketer|actor|musician|politician|scientist|footballer|driver/i.test(term))) {
     terms.push("person");
   }
 
@@ -284,7 +314,7 @@ export function buildKnowledgeSearchPlan(
   if (primaryTerms.length === 0) return null;
 
   const broadTerms = primaryTerms.filter(
-    (term) => !/captain|bowler|batter|all-rounder|male|female|technology|fighter|magic/i.test(term),
+    (term) => !/captain|fast bowler|bowler|batter|all-rounder|male|female|technology|fighter|magic/i.test(term),
   );
 
   const primaryQuery = primaryTerms.join(" ").slice(0, 160);
