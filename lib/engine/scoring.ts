@@ -3,6 +3,7 @@ import type { AnswerType, GameAnswer } from "@/lib/game/types";
 import { CANDIDATES, type CandidateProfile } from "./candidates";
 import { EXTRA_CANDIDATES } from "./extra-candidates";
 import { QUESTION_BY_ID, TRAIT_QUESTIONS, type TraitQuestion } from "./questions";
+import { RECOVERY_QUESTION_BY_ID } from "./recovery-question";
 
 export interface RankedCandidate {
   candidate: CandidateProfile;
@@ -93,6 +94,14 @@ export function mergeCandidatePools(
   return [...merged.values()];
 }
 
+interface ScoringQuestion {
+  tag: string;
+}
+
+function scoringQuestionForId(questionId: string): ScoringQuestion | undefined {
+  return QUESTION_BY_ID.get(questionId) ?? RECOVERY_QUESTION_BY_ID.get(questionId);
+}
+
 export function analyzeCandidates(
   history: readonly GameAnswer[],
   rejectedGuesses: readonly string[] = [],
@@ -100,8 +109,8 @@ export function analyzeCandidates(
 ): CandidateAnalysis {
   const rejected = new Set(rejectedGuesses.map(normalizeCandidateName));
   const recognized = history
-    .map((answer) => ({ answer, question: QUESTION_BY_ID.get(answer.questionId) }))
-    .filter((entry): entry is { answer: GameAnswer; question: TraitQuestion } => Boolean(entry.question));
+    .map((answer) => ({ answer, question: scoringQuestionForId(answer.questionId) }))
+    .filter((entry): entry is { answer: GameAnswer; question: ScoringQuestion } => Boolean(entry.question));
 
   const scored = candidates
     .filter((candidate) => !rejected.has(normalizeCandidateName(candidate.name)))
