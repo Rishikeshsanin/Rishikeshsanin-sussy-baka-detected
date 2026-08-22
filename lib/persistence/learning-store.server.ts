@@ -46,8 +46,8 @@ export async function recordLearningEvent(input: LearningEventInput): Promise<bo
   const rejected = input.rejectedGuesses.slice(0, 20).map((guess) => guess.slice(0, 100));
 
   try {
-    await sql.begin(async (tx) => {
-      await tx`
+    const stored = await sql.begin(async (tx) => {
+      const eventRows = await tx`
         insert into sussy_baka_detected.learning_events (
           game_id_hash,
           outcome,
@@ -67,7 +67,12 @@ export async function recordLearningEvent(input: LearningEventInput): Promise<bo
           ${evidence},
           'knowledge-v1-persistent'
         )
+        on conflict do nothing
+        returning id
       `;
+
+      // Replayed browser/network requests must not increment aggregate stats twice.
+      if (eventRows.length === 0) return false;
 
       if (input.outcome === "correct_guess") {
         await tx`
@@ -124,8 +129,10 @@ export async function recordLearningEvent(input: LearningEventInput): Promise<bo
               updated_at = now()
         `;
       }
+
+      return true;
     });
-    return true;
+    return stored;
   } catch {
     console.warn("[persistence] optional database operation unavailable", { operation: "learning-event-write" });
     return false;
