@@ -23,6 +23,7 @@ import {
   type TurnReason,
   type TurnToken,
 } from "@/lib/game";
+import { getGameReaction } from "@/lib/game/reactions";
 import type { APIErrorBody, GameAIResponse, TurnRequest } from "@/lib/ai/types";
 
 import { BrandMark } from "../ui/BrandMark";
@@ -155,7 +156,7 @@ export function GameShell() {
             code: errorBody?.code ?? "NETWORK_ERROR",
             message:
               errorBody?.message ??
-              "The oracle could not reach its deduction engine. Your answers are still safe.",
+              "The detector lost the signal. Your answers are still safe.",
             retryable: true,
           },
         });
@@ -198,9 +199,9 @@ export function GameShell() {
         error: {
           code: didTimeOut ? "NETWORK_ERROR" : "AI_UNAVAILABLE",
           message: didTimeOut
-            ? "The deduction engine took too long to answer. Try the same turn again."
+            ? "The detector took too long to cook. Try the same turn again."
             : error instanceof TypeError
-              ? "The oracle could not reach the server. Check your connection and try again."
+              ? "The detector could not reach the server. Check your connection and try again."
               : "The deduction engine could not complete this turn.",
           retryable: true,
         },
@@ -353,6 +354,13 @@ export function GameShell() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [handleAnswer, handleUndo, openDialog, state.checkpoints.length, state.status]);
 
+  const reaction = getGameReaction({
+    history: state.history,
+    confidence: state.confidence,
+    thinking: state.status === "thinking",
+    rejectedGuesses: state.rejectedGuesses,
+  });
+
   const renderGame = () => {
     switch (state.status) {
       case "idle":
@@ -364,6 +372,7 @@ export function GameShell() {
             questionNumber={state.questionNumber}
             question={state.currentQuestion?.question ?? null}
             confidence={state.confidence}
+            reaction={reaction}
             thinking={state.status === "thinking"}
             canUndo={state.checkpoints.length > 0}
             onAnswer={handleAnswer}
@@ -416,7 +425,12 @@ export function GameShell() {
   return (
     <main className="game-root">
       <header className="site-header">
-        <button type="button" className="text-left" onClick={state.status === "idle" ? undefined : returnHome} aria-label={state.status === "idle" ? brand.name : "Return to Veyra home"}>
+        <button
+          type="button"
+          className="text-left"
+          onClick={state.status === "idle" ? undefined : returnHome}
+          aria-label={state.status === "idle" ? brand.name : `Return to ${brand.name} home`}
+        >
           <BrandMark compact={state.status !== "idle"} />
         </button>
         <nav className="flex items-center gap-0.5" aria-label="Help and settings">
@@ -431,7 +445,11 @@ export function GameShell() {
         </nav>
       </header>
 
-      <div className="page-stage">{hydrated ? renderGame() : <div className="text-xs uppercase tracking-[0.2em] text-white/26">Waking the oracle…</div>}</div>
+      <div className="page-stage">
+        {hydrated ? renderGame() : (
+          <div className="text-xs uppercase tracking-[0.2em] text-white/26">Booting the detector…</div>
+        )}
+      </div>
 
       <HowToPlayModal open={openDialog === "how"} onClose={closeDialog} />
       <SettingsModal open={openDialog === "settings"} onClose={closeDialog} />
