@@ -29,8 +29,9 @@ export class HybridProvider implements AIProvider {
     const hypotheses = topCandidateNames(analysis);
     const memorySummary = summarizeAnalysis(analysis);
 
+    const rejectedLocalGuess = context.rejectedGuesses.length >= 1;
     const shouldEscapeLocalPool =
-      context.rejectedGuesses.length >= 1 ||
+      rejectedLocalGuess ||
       (context.history.length >= 14 && analysis.confidence < 0.58) ||
       analysis.ranked.length < 2;
 
@@ -73,11 +74,21 @@ export class HybridProvider implements AIProvider {
     }
 
     // The LLM is a recovery/long-tail layer, not the whole deduction engine.
+    // If our curated pool already guessed wrong, clear its shortlist so the LLM
+    // is explicitly encouraged to explore outside the seed database.
+    const escapeNote = rejectedLocalGuess
+      ? "The curated seed pool already produced a rejected guess. Explore outside that shortlist and trust the full answer history."
+      : memorySummary;
+
     return this.fallback.playTurn({
       ...context,
       aiMemory: {
-        summary: [context.aiMemory.summary, memorySummary].filter(Boolean).join(" ").slice(0, 1_200),
-        candidateHypotheses: hypotheses.length > 0 ? hypotheses : context.aiMemory.candidateHypotheses,
+        summary: [context.aiMemory.summary, escapeNote].filter(Boolean).join(" ").slice(0, 1_200),
+        candidateHypotheses: rejectedLocalGuess
+          ? []
+          : hypotheses.length > 0
+            ? hypotheses
+            : context.aiMemory.candidateHypotheses,
       },
     });
   }
