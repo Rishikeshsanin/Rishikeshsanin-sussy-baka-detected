@@ -1,13 +1,21 @@
 import "server-only";
 
-import type { CandidateAnalysis } from "@/lib/engine/scoring";
 import type { CandidateProfile } from "@/lib/engine/candidates";
+import type { CandidateAnalysis } from "@/lib/engine/scoring";
+import { normalizeCandidateName } from "@/lib/engine/scoring";
 import type { GameAnswer } from "@/lib/game/types";
+import {
+  getLearnedCandidates,
+  getPersistentSearchCandidates,
+  savePersistentSearchCandidates,
+} from "@/lib/persistence/knowledge-store.server";
 
+import { cacheCandidates, knowledgeCacheKey } from "./cache.server";
 import { buildKnowledgeSearchPlan, type KnowledgeSearchPlan } from "./query";
 import { discoverWikimediaCandidates } from "./wikimedia.server";
 
 const DISCOVERY_TIMEOUT_MS = 5_200;
+const MAX_COMBINED_CANDIDATES = 40;
 
 export interface KnowledgeDiscovery {
   plan: KnowledgeSearchPlan;
@@ -32,6 +40,21 @@ export function shouldAttemptKnowledgeDiscovery(
   return history.length >= 8;
 }
 
+function mergeCandidates(...groups: readonly CandidateProfile[][]): CandidateProfile[] {
+  const merged = new Map<string, CandidateProfile>();
+  for (const group of groups) {
+    for (const candidate of group) {
+      const key = normalizeCandidateName(candidate.name);
+      if (!key) continue;
+      const current = merged.get(key);
+      if (!current || (candidate.popularityScore ?? candidate.prior ?? 0) > (current.popularityScore ?? current.prior ?? 0)) {
+        merged.set(key, candidate);
+      }
+    }
+  }
+  return [...merged.values()].slice(0, MAX_COMBINED_CANDIDATES);
+}
+
 export async function discoverKnowledgeCandidates(
   history: readonly GameAnswer[],
   signal?: AbortSignal,
@@ -44,9 +67,29 @@ export async function discoverKnowledgeCandidates(
   const abortListener = () => controller.abort();
   signal?.addEventListener("abort", abortListener, { once: true });
   const startedAt = Date.now();
+  const cacheKey = knowledgeCacheKey(plan.primaryQuery, plan.secondaryQuery);
 
   try {
-    const candidates = await discoverWikimediaCandidates(plan, controller.signal);
+    const [persistedSearch, learned] = await Promise.all([
+      getPersistentSearchCandidates(cacheKey),
+      getLearnedCandidates(plan),
+    ]);
+
+    if (persistedSearch) {
+      cacheCandidates(cacheKey, persistedSearch);
+      return {
+        plan,
+        candidates: mergeCandidates(learned, persistedSearch),
+        durationMs: Date.now() - startedAt,
+      };
+    }
+
+    const liveCandidates = await discoverWikimediaCandidates(plan, controller.signal);
+    const candidates = mergeCandidates(learned, liveCandidates);
+
+    // Persistence is best-effort. A database outage must never block a round.
+    void savePersistentSearchCandidates(cacheKey, plan, liveCandidates);
+
     return {
       plan,
       candidates,
