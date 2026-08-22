@@ -1,3 +1,4 @@
+import type { CandidateProfile } from "@/lib/engine/candidates";
 import { getGuessConfidenceThreshold } from "@/lib/game/guess-policy";
 import { selectRecoveryQuestion } from "@/lib/engine/recovery-question";
 import {
@@ -7,12 +8,9 @@ import {
   selectBestQuestion,
   summarizeAnalysis,
   topCandidateNames,
+  type CandidateAnalysis,
 } from "@/lib/engine/scoring";
-import {
-  discoverKnowledgeCandidates,
-  shouldAttemptKnowledgeDiscovery,
-  type KnowledgeDiscovery,
-} from "@/lib/knowledge/discovery.server";
+import { buildKnowledgeSearchPlan } from "@/lib/knowledge/query";
 
 import {
   AIError,
@@ -22,27 +20,49 @@ import {
   type GuessAIResponse,
 } from "./types";
 
-type KnowledgeDiscoveryFn = (
+export interface KnowledgeDiscoveryResult {
+  plan: { primaryQuery: string };
+  candidates: CandidateProfile[];
+  durationMs: number;
+}
+
+export type KnowledgeDiscoveryFn = (
   history: AIProviderContext["history"],
   signal?: AbortSignal,
-) => Promise<KnowledgeDiscovery | null>;
+) => Promise<KnowledgeDiscoveryResult | null>;
+
+const noLiveDiscovery: KnowledgeDiscoveryFn = async () => null;
+
+function shouldAttemptKnowledgeDiscovery(
+  history: AIProviderContext["history"],
+  analysis: CandidateAnalysis,
+  rejectedGuesses: readonly string[],
+): boolean {
+  if (history.length < 6) return false;
+  if (!buildKnowledgeSearchPlan(history)) return false;
+  if (rejectedGuesses.length > 0) return true;
+  if (analysis.confidence >= 0.72) return true;
+  return history.length >= 8;
+}
 
 /**
  * Hybrid deduction engine:
  * 1) deterministic Bayesian-style ranking over a bundled hot pool,
- * 2) live Wikimedia/Wikidata candidate discovery when enough evidence exists,
+ * 2) optional live verified-candidate discovery when enough evidence exists,
  * 3) entropy-based question selection over the combined pool,
  * 4) configured LLM recovery for semantic/long-tail gaps.
  *
- * External knowledge and AI are both optional accelerators: an upstream outage
- * must never end a playable round while useful local/recovery questions remain.
+ * This class intentionally contains no server-only/network import. Production
+ * wires the Wikimedia adapter from config.server.ts, while unit tests can inject
+ * a deterministic discovery function. External outages never end a playable
+ * round while useful structured/recovery questions remain.
  */
 export class HybridProvider implements AIProvider {
   readonly name: AIProvider["name"];
 
   constructor(
     private readonly fallback: AIProvider,
-    private readonly discoverKnowledge: KnowledgeDiscoveryFn = discoverKnowledgeCandidates,
+    private readonly discoverKnowledge: KnowledgeDiscoveryFn = noLiveDiscovery,
   ) {
     this.name = fallback.name;
   }
@@ -55,7 +75,7 @@ export class HybridProvider implements AIProvider {
     );
 
     let candidatePool = [...SEED_CANDIDATES];
-    let discovery: KnowledgeDiscovery | null = null;
+    let discovery: KnowledgeDiscoveryResult | null = null;
 
     if (
       shouldAttemptKnowledgeDiscovery(
@@ -133,12 +153,12 @@ export class HybridProvider implements AIProvider {
     }
 
     // The LLM is a recovery layer, not the knowledge base. Candidate hypotheses
-    // now include verified Wikimedia discoveries when available, giving Gemini a
-    // compact shortlist without delegating confidence/calibration to the model.
+    // include verified live discoveries when available, giving it a compact
+    // shortlist without delegating confidence/calibration to the model.
     const escapeNote = rejectedLocalGuess
       ? "A previous guess was rejected. Explore beyond that candidate and trust the full answer history."
       : discovery?.candidates.length
-        ? `${memorySummary} Live Wikimedia discovery added ${discovery.candidates.length} verified entities.`
+        ? `${memorySummary} Live knowledge discovery added ${discovery.candidates.length} verified entities.`
         : memorySummary;
 
     try {
