@@ -5,6 +5,7 @@ import {
   guessConfidenceThreshold,
   playValidatedTurn,
 } from "../../lib/ai/provider";
+import { makeConfirmationQuestionId } from "../../lib/game/guess-policy";
 import { AIError, type AIProvider, type AIProviderContext, type GameAIResponse, type TurnRequest } from "../../lib/ai/types";
 
 describe("playValidatedTurn", () => {
@@ -69,6 +70,55 @@ describe("playValidatedTurn", () => {
       playValidatedTurn(provider, request({ history, questionNumber: 8 })),
     ).resolves.toMatchObject({ type: "question", questionId: "confirm-bowling-style" });
     expect(provider.contexts[1]?.correction).toMatch(/do NOT guess yet/i);
+  });
+
+  it("converts a direct identity question into a counted guess when confirmation is satisfied", async () => {
+    const history = [
+      evidence("real", 1),
+      evidence("male", 2),
+      evidence("actor", 3),
+      evidence("telugu", 4),
+      evidence("alive", 5),
+      evidence("modern", 6),
+      {
+        questionId: makeConfirmationQuestionId("Vijay Deverakonda", "acting", true),
+        question: "Is your person mainly known for acting?",
+        answer: "yes" as const,
+        timestamp: 7,
+      },
+      {
+        questionId: makeConfirmationQuestionId("Vijay Deverakonda", "tollywood", true),
+        question: "Is your person strongly associated with Telugu cinema?",
+        answer: "probably" as const,
+        timestamp: 8,
+      },
+    ];
+    const provider = new SequenceProvider([
+      identityQuestion("Is that Vijay Deverakonda?", "Vijay Deverakonda", 0.97),
+    ]);
+
+    await expect(
+      playValidatedTurn(provider, request({ history, questionNumber: 8 })),
+    ).resolves.toMatchObject({
+      type: "guess",
+      name: "Vijay Deverakonda",
+    });
+    expect(provider.contexts).toHaveLength(1);
+  });
+
+  it("never exposes a direct identity question for free before confirmation", async () => {
+    const history = Array.from({ length: 8 }, (_, index) => evidence(`clue-${index + 1}`, index + 1));
+    const provider = new SequenceProvider([
+      identityQuestion("Is that Vijay Deverakonda?", "Vijay Deverakonda", 0.99),
+      question("film-industry", "Is your person mainly known for acting in films?"),
+    ]);
+
+    await expect(
+      playValidatedTurn(provider, request({ history, questionNumber: 8 })),
+    ).resolves.toMatchObject({ type: "question", questionId: "film-industry" });
+    expect(provider.contexts).toHaveLength(2);
+    expect(provider.contexts[1]?.correction).toMatch(/do NOT guess yet/i);
+    expect(provider.contexts[1]?.correction).toMatch(/do NOT put the candidate's name/i);
   });
 
   it("does not allow an early give-up on a long-tail round", async () => {
@@ -180,6 +230,15 @@ function request(overrides: Partial<TurnRequest> = {}): TurnRequest {
   };
 }
 
+function evidence(questionId: string, timestamp: number) {
+  return {
+    questionId,
+    question: `Is ${questionId} true?`,
+    answer: "yes" as const,
+    timestamp,
+  };
+}
+
 function question(questionId: string, text: string): GameAIResponse {
   return {
     type: "question",
@@ -188,6 +247,17 @@ function question(questionId: string, text: string): GameAIResponse {
     confidence: 0.4,
     memorySummary: "The detector is still narrowing the field.",
     candidateHypotheses: [],
+  };
+}
+
+function identityQuestion(text: string, name: string, confidence: number): GameAIResponse {
+  return {
+    type: "question",
+    questionId: "identity-leak",
+    question: text,
+    confidence,
+    memorySummary: "The detector has a strong lead.",
+    candidateHypotheses: [name],
   };
 }
 
