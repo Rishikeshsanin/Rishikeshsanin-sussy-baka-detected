@@ -1,6 +1,7 @@
 import "server-only";
 
 import { GeminiProvider, DEFAULT_GEMINI_MODEL } from "./gemini-provider";
+import { HybridProvider } from "./hybrid-provider";
 import { MockProvider } from "./mock-provider";
 import { DEFAULT_OLLAMA_BASE_URL, OllamaProvider } from "./ollama-provider";
 import { AIError, type AIProvider, type AIProviderName } from "./types";
@@ -12,22 +13,28 @@ export function getConfiguredAIProvider(): AIProvider {
   const providerName = readProviderName(process.env.AI_PROVIDER);
   const timeoutMs = getAITurnTimeoutMs();
 
+  let fallback: AIProvider;
   switch (providerName) {
     case "mock":
-      return new MockProvider();
+      fallback = new MockProvider();
+      break;
     case "gemini":
-      return new GeminiProvider({
+      fallback = new GeminiProvider({
         apiKey: process.env.GEMINI_API_KEY ?? "",
         model: process.env.GEMINI_MODEL ?? DEFAULT_GEMINI_MODEL,
         timeoutMs,
       });
+      break;
     case "ollama":
-      return new OllamaProvider({
+      fallback = new OllamaProvider({
         baseUrl: process.env.OLLAMA_BASE_URL ?? DEFAULT_OLLAMA_BASE_URL,
         model: process.env.OLLAMA_MODEL ?? "",
         timeoutMs,
       });
+      break;
   }
+
+  return new HybridProvider(fallback);
 }
 
 export function getAITurnTimeoutMs(): number {
