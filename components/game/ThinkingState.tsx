@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 
 const PHRASES = [
-  "Following the strongest clue…",
-  "Narrowing the possibilities…",
-  "Testing a new theory…",
-  "Looking for the telltale detail…",
+  "Cross-checking the lore…",
+  "Enhancing the sus…",
+  "Deleting terrible theories…",
+  "Finding the next useful clue…",
+  "Running advanced bro detection…",
 ];
 
 export function ThinkingState() {
@@ -27,7 +28,7 @@ export function ThinkingState() {
         <i />
       </div>
       <p className="mt-5 text-lg font-medium tracking-[-0.02em] text-white/82">{PHRASES[phraseIndex]}</p>
-      <p className="mt-2 text-xs uppercase tracking-[0.18em] text-white/30">The oracle is listening</p>
+      <p className="mt-2 text-xs uppercase tracking-[0.18em] text-white/30">detector is locked in</p>
     </div>
   );
 }
