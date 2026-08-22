@@ -51,9 +51,10 @@ export async function playValidatedTurn(
         );
       }
 
-      const semanticIssue = validateResponseSemantics(parsed.data, request);
+      const normalizedResponse = coerceIdentityQuestionToGuess(parsed.data);
+      const semanticIssue = validateResponseSemantics(normalizedResponse, request);
       if (!semanticIssue) {
-        return parsed.data;
+        return normalizedResponse;
       }
 
       if (attempt < MAX_INVALID_RESPONSE_RETRIES) {
@@ -91,6 +92,63 @@ export function validateResponseSemantics(
 }
 
 export const guessConfidenceThreshold = getGuessConfidenceThreshold;
+
+/**
+ * A provider must not receive a free identity attempt by disguising it as a
+ * QUESTION. If the text is effectively "Is that <candidate>?", normalize it to
+ * GUESS first, then let the normal confidence/confirmation policy decide whether
+ * the guess is legal. If it is too early, the provider is corrected and the
+ * leaked name never reaches the player.
+ */
+export function coerceIdentityQuestionToGuess(response: GameAIResponse): GameAIResponse {
+  if (response.type !== "question") return response;
+
+  const name = extractIdentityName(response);
+  if (!name) return response;
+
+  return {
+    type: "guess",
+    name,
+    confidence: response.confidence,
+    memorySummary: response.memorySummary,
+    candidateHypotheses: [
+      name,
+      ...response.candidateHypotheses.filter(
+        (candidate) => canonicalizeGuess(candidate) !== canonicalizeGuess(name),
+      ),
+    ].slice(0, 8),
+  };
+}
+
+function extractIdentityName(response: QuestionAIResponse): string | null {
+  const question = response.question.trim();
+  const patterns = [
+    /^(?:is|was)\s+(?:that|it|this|your\s+(?:person|character)|the\s+(?:person|character))\s+(.+?)\?$/iu,
+    /^are\s+you\s+thinking\s+of\s+(.+?)\?$/iu,
+    /^could\s+it\s+be\s+(.+?)\?$/iu,
+    /^would\s+(?:that|it)\s+be\s+(.+?)\?$/iu,
+  ];
+
+  for (const pattern of patterns) {
+    const match = question.match(pattern);
+    const rawName = match?.[1]?.trim();
+    if (!rawName) continue;
+
+    const normalizedRaw = canonicalizeGuess(rawName);
+    const hypothesis = response.candidateHypotheses.find(
+      (candidate) => canonicalizeGuess(candidate) === normalizedRaw,
+    );
+    if (hypothesis) return hypothesis;
+
+    // If the provider forgot to include the candidate in hypotheses, accept only
+    // a short proper-name-looking suffix so ordinary questions such as
+    // "Is that person from India?" are never misclassified as guesses.
+    const properName = /^[\p{Lu}\d][\p{L}\p{N}'’.-]*(?:\s+[\p{Lu}\d][\p{L}\p{N}'’.-]*){0,4}$/u;
+    if (properName.test(rawName)) return rawName;
+  }
+
+  return null;
+}
 
 function validateQuestion(
   response: QuestionAIResponse,
@@ -187,7 +245,7 @@ function validateGuess(
     return {
       publicMessage: "The deduction engine tried to reveal a strong lead before confirming it.",
       correction:
-        `You may have the right candidate, but do NOT guess yet. Ask another concise fact-based QUESTION that this suspected candidate should satisfy and that distinguishes close alternatives. Keep the suspected candidate first in candidateHypotheses. SBD prefers confirmation over a failed guess.`,
+        "You may have the right candidate, but do NOT guess yet and do NOT put the candidate's name in question text. Ask another concise fact-based QUESTION that this suspected candidate should satisfy and that distinguishes close alternatives. Keep the suspected candidate first in candidateHypotheses. SBD prefers confirmation over a failed guess.",
     };
   }
 
