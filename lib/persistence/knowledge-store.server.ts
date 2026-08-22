@@ -74,7 +74,6 @@ export async function savePersistentSearchCandidates(
   if (!sql) return;
 
   const safeCandidates = candidates.slice(0, MAX_PERSISTED_CANDIDATES);
-  const payload = JSON.stringify(safeCandidates);
 
   try {
     await sql`
@@ -89,7 +88,7 @@ export async function savePersistentSearchCandidates(
         ${cacheKey},
         ${plan.primaryQuery},
         ${plan.secondaryQuery ?? null},
-        ${payload}::jsonb,
+        ${sql.json(safeCandidates)},
         now(),
         now() + (${SEARCH_CACHE_TTL_HOURS} * interval '1 hour')
       )
@@ -183,7 +182,7 @@ export async function upsertLearnedCandidate(candidate: CandidateProfile): Promi
         ${candidate.description ?? null},
         ${sql.array([...candidate.tags])}::text[],
         ${Math.max(0, candidate.popularityScore ?? 0)},
-        ${JSON.stringify({ verifiedBy: "wikidata", learnedFrom: "give_up_reveal" })}::jsonb,
+        ${sql.json({ verifiedBy: "wikidata", learnedFrom: "give_up_reveal" })},
         now(),
         null
       )
