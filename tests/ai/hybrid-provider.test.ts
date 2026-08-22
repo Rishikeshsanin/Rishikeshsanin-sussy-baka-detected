@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { HybridProvider } from "@/lib/ai/hybrid-provider";
+import { calibrateFallbackGuess, HybridProvider } from "@/lib/ai/hybrid-provider";
 import type { AIProvider, AIProviderContext, GameAIResponse } from "@/lib/ai/types";
 
 function context(overrides: Partial<AIProviderContext> = {}): AIProviderContext {
@@ -27,6 +27,15 @@ function fallbackProvider(result: GameAIResponse): AIProvider & { playTurn: Retu
     name: "mock",
     playTurn: vi.fn(async () => result),
   };
+}
+
+function historyOfLength(length: number): AIProviderContext["history"] {
+  return Array.from({ length }, (_, index) => ({
+    questionId: `q-${index + 1}`,
+    question: `Is trait ${index + 1} true?`,
+    answer: "yes" as const,
+    timestamp: index + 1,
+  }));
 }
 
 describe("HybridProvider", () => {
@@ -71,5 +80,38 @@ describe("HybridProvider", () => {
     const forwarded = fallback.playTurn.mock.calls[0]?.[0] as AIProviderContext;
     expect(forwarded.aiMemory.candidateHypotheses).toEqual([]);
     expect(forwarded.aiMemory.summary).toMatch(/Explore outside/i);
+  });
+
+  it("does not trust an early LLM self-reported 99% confidence", () => {
+    const calibrated = calibrateFallbackGuess(
+      {
+        type: "guess",
+        name: "Obscure Person",
+        confidence: 0.99,
+        memorySummary: "model thinks it knows",
+        candidateHypotheses: ["Obscure Person"],
+      },
+      { history: historyOfLength(5), rejectedGuesses: [] },
+    );
+
+    expect(calibrated.confidence).toBe(0.96);
+  });
+
+  it("penalizes fallback confidence after rejected guesses", () => {
+    const calibrated = calibrateFallbackGuess(
+      {
+        type: "guess",
+        name: "Second Theory",
+        confidence: 0.99,
+        memorySummary: "another theory",
+        candidateHypotheses: ["Second Theory"],
+      },
+      {
+        history: historyOfLength(18),
+        rejectedGuesses: ["Wrong One", "Wrong Two"],
+      },
+    );
+
+    expect(calibrated.confidence).toBe(0.85);
   });
 });
