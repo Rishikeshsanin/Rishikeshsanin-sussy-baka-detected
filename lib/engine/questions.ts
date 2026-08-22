@@ -13,15 +13,31 @@ export const TRAIT_QUESTIONS: readonly TraitQuestion[] = [
   { id: "alive", text: "Is your person alive today?", tag: "alive" },
   { id: "man", text: "Is your person a man?", tag: "man" },
   { id: "woman", text: "Is your person a woman?", tag: "woman" },
+
+  // Broad geography first; live discovery can then fan into current people.
+  { id: "asia", text: "Is your person strongly associated with Asia?", tag: "asia" },
+  { id: "europe", text: "Is your person strongly associated with Europe?", tag: "europe" },
+  { id: "north-america", text: "Is your person strongly associated with North America?", tag: "north_america" },
+  { id: "south-america", text: "Is your person strongly associated with South America?", tag: "south_america" },
+  { id: "africa", text: "Is your person strongly associated with Africa?", tag: "africa" },
+  { id: "oceania", text: "Is your person strongly associated with Australia, New Zealand, or Oceania?", tag: "oceania" },
+
+  // High-frequency countries / regions.
   { id: "india", text: "Is your person strongly associated with India?", tag: "india" },
   { id: "usa", text: "Is your person strongly associated with the United States?", tag: "usa" },
-  { id: "europe", text: "Is your person strongly associated with Europe?", tag: "europe" },
-  { id: "south-america", text: "Is your person strongly associated with South America?", tag: "south_america" },
   { id: "australia", text: "Is your person strongly associated with Australia?", tag: "australia" },
   { id: "uk", text: "Is your person strongly associated with the United Kingdom?", tag: "uk" },
   { id: "new-zealand", text: "Is your person strongly associated with New Zealand?", tag: "new_zealand" },
   { id: "pakistan", text: "Is your person strongly associated with Pakistan?", tag: "pakistan" },
   { id: "south-africa", text: "Is your person strongly associated with South Africa?", tag: "south_africa" },
+  { id: "sri-lanka", text: "Is your person strongly associated with Sri Lanka?", tag: "sri_lanka" },
+  { id: "bangladesh", text: "Is your person strongly associated with Bangladesh?", tag: "bangladesh" },
+  { id: "west-indies", text: "Is your person strongly associated with the West Indies or Caribbean?", tag: "west_indies" },
+  { id: "japan-person", text: "Is your person strongly associated with Japan?", tag: "japan" },
+  { id: "south-korea", text: "Is your person strongly associated with South Korea?", tag: "korea" },
+  { id: "canada", text: "Is your person strongly associated with Canada?", tag: "canada" },
+
+  // Profession / fame domain.
   { id: "sports", text: "Is your person mainly famous for sports?", tag: "sports" },
   { id: "acting", text: "Is your person mainly known for acting?", tag: "acting" },
   { id: "music", text: "Is your person mainly known for music?", tag: "music" },
@@ -30,6 +46,8 @@ export const TRAIT_QUESTIONS: readonly TraitQuestion[] = [
   { id: "science", text: "Is your person mainly known for science or invention?", tag: "science" },
   { id: "internet", text: "Did your person become famous mainly through the internet?", tag: "internet" },
   { id: "creator", text: "Is your person a major online creator or streamer?", tag: "creator" },
+
+  // Sports specializations.
   { id: "cricket", text: "Is your person famous for cricket?", tag: "cricket" },
   { id: "cricket-bowler", text: "Is your cricketer mainly known as a bowler?", tag: "bowler" },
   { id: "cricket-batter", text: "Is your cricketer mainly known as a batter?", tag: "batter" },
@@ -40,6 +58,8 @@ export const TRAIT_QUESTIONS: readonly TraitQuestion[] = [
   { id: "tennis", text: "Is your person famous for tennis?", tag: "tennis" },
   { id: "motorsport", text: "Is your person famous for motorsport?", tag: "motorsport" },
   { id: "combat-sports", text: "Is your person famous for boxing, MMA, or another combat sport?", tag: "combat_sports" },
+
+  // Entertainment / tech / historical specializations.
   { id: "bollywood", text: "Is your person strongly associated with Bollywood?", tag: "bollywood" },
   { id: "tollywood", text: "Is your person strongly associated with Telugu cinema?", tag: "tollywood" },
   { id: "south-cinema", text: "Is your person strongly associated with South Indian cinema?", tag: "south_cinema" },
@@ -49,6 +69,8 @@ export const TRAIT_QUESTIONS: readonly TraitQuestion[] = [
   { id: "born-before-1980", text: "Was your person born before 1980?", tag: "born_before_1980" },
   { id: "born-after-1980", text: "Was your person born in 1980 or later?", tag: "born_after_1980" },
   { id: "born-after-2000", text: "Was your person born in 2000 or later?", tag: "born_after_2000" },
+
+  // Fictional-character branch.
   { id: "fictional", text: "Is your character fictional?", tag: "fictional" },
   { id: "superhero", text: "Is your character a superhero?", tag: "superhero" },
   { id: "supervillain", text: "Is your character mainly a villain?", tag: "supervillain" },
