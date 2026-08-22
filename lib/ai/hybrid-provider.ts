@@ -6,7 +6,12 @@ import {
   topCandidateNames,
 } from "@/lib/engine/scoring";
 
-import type { AIProvider, AIProviderContext, GameAIResponse } from "./types";
+import type {
+  AIProvider,
+  AIProviderContext,
+  GameAIResponse,
+  GuessAIResponse,
+} from "./types";
 
 /**
  * Hybrid deduction engine:
@@ -80,7 +85,7 @@ export class HybridProvider implements AIProvider {
       ? "The curated seed pool already produced a rejected guess. Explore outside that shortlist and trust the full answer history."
       : memorySummary;
 
-    return this.fallback.playTurn({
+    const fallbackResult = await this.fallback.playTurn({
       ...context,
       aiMemory: {
         summary: [context.aiMemory.summary, escapeNote].filter(Boolean).join(" ").slice(0, 1_200),
@@ -91,5 +96,40 @@ export class HybridProvider implements AIProvider {
             : context.aiMemory.candidateHypotheses,
       },
     });
+
+    return fallbackResult.type === "guess"
+      ? calibrateFallbackGuess(fallbackResult, context)
+      : fallbackResult;
   }
+}
+
+/**
+ * LLM confidence is not a calibrated probability. We therefore treat it only as
+ * an upper-bound hint and cap it by evidence depth. The normal server-side guess
+ * policy still validates the returned value after this function runs.
+ *
+ * Early long-tail guesses are deliberately forced below the policy threshold,
+ * causing the provider validator to request another discriminating question.
+ */
+export function calibrateFallbackGuess(
+  guess: GuessAIResponse,
+  context: Pick<AIProviderContext, "history" | "rejectedGuesses">,
+): GuessAIResponse {
+  const answers = context.history.length;
+
+  let evidenceCap: number;
+  if (answers <= 5) evidenceCap = 0.96;
+  else if (answers <= 8) evidenceCap = 0.92;
+  else if (answers <= 10) evidenceCap = 0.94;
+  else if (answers <= 15) evidenceCap = 0.87;
+  else if (answers <= 20) evidenceCap = 0.9;
+  else evidenceCap = 0.82;
+
+  const rejectionPenalty = Math.min(0.09, context.rejectedGuesses.length * 0.025);
+  const calibrated = Math.max(0, Math.min(guess.confidence, evidenceCap) - rejectionPenalty);
+
+  return {
+    ...guess,
+    confidence: Number(calibrated.toFixed(3)),
+  };
 }
