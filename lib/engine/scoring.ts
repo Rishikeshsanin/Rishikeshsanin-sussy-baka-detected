@@ -27,11 +27,26 @@ export const SEED_CANDIDATES: readonly CandidateProfile[] = [
   ...EXTRA_CANDIDATES,
 ];
 
+const DERIVED_TAGS: Record<string, readonly string[]> = {
+  asia: ["india", "pakistan", "bangladesh", "sri_lanka", "afghanistan", "japan", "korea"],
+  oceania: ["australia", "new_zealand"],
+  north_america: ["usa", "canada"],
+  africa: ["south_africa"],
+};
+
+const EXCLUSIVE_GROUPS: readonly (readonly string[])[] = [
+  ["real", "fictional"],
+  ["man", "woman"],
+  ["born_before_1980", "born_after_1980"],
+];
+
 function clamp(value: number, min = 0, max = 1): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function answerLikelihood(answer: AnswerType, expected: boolean): number {
+function answerLikelihood(answer: AnswerType, expected: boolean | null): number {
+  if (answer === "unknown" || expected === null) return 0.5;
+
   switch (answer) {
     case "yes":
       return expected ? 0.94 : 0.06;
@@ -54,6 +69,36 @@ export function normalizeCandidateName(name: string): string {
     .replace(/[^\p{L}\p{N}]+/gu, " ")
     .trim()
     .replace(/\s+/g, " ");
+}
+
+export function candidateHasTag(candidate: CandidateProfile, tag: string): boolean {
+  if (candidate.tags.includes(tag)) return true;
+  return (DERIVED_TAGS[tag] ?? []).some((sourceTag) => candidate.tags.includes(sourceTag));
+}
+
+/**
+ * Live Wikimedia candidates use an open-world model: a missing extracted tag is
+ * usually "unknown", not proof that the trait is false. Bundled seed candidates
+ * are curated densely enough to keep the original closed-world behavior.
+ */
+function traitExpectation(candidate: CandidateProfile, tag: string): boolean | null {
+  if (candidateHasTag(candidate, tag)) return true;
+
+  const openWorld = candidate.source === "wikimedia" || candidate.source === "learned";
+  if (!openWorld) return false;
+
+  for (const group of EXCLUSIVE_GROUPS) {
+    if (!group.includes(tag)) continue;
+    if (group.some((other) => other !== tag && candidateHasTag(candidate, other))) {
+      return false;
+    }
+  }
+
+  if (tag === "born_after_2000" && candidateHasTag(candidate, "born_before_1980")) return false;
+  if (tag === "alive" && candidateHasTag(candidate, "historical")) return false;
+  if (tag === "historical" && candidateHasTag(candidate, "alive")) return false;
+
+  return null;
 }
 
 /**
@@ -117,7 +162,7 @@ export function analyzeCandidates(
     .map((candidate) => {
       let logScore = Math.log(Math.max(candidate.prior ?? 1, 0.05));
       for (const { answer, question } of recognized) {
-        const expected = candidate.tags.includes(question.tag);
+        const expected = traitExpectation(candidate, question.tag);
         logScore += Math.log(answerLikelihood(answer.answer, expected) + EPSILON);
       }
       return { candidate, logScore };
@@ -191,10 +236,11 @@ export function selectBestQuestion(
   for (const question of TRAIT_QUESTIONS) {
     if (askedIds.has(question.id)) continue;
 
-    const yesProbability = analysis.ranked.reduce(
-      (sum, item) => sum + (item.candidate.tags.includes(question.tag) ? item.probability : 0),
-      0,
-    );
+    const yesProbability = analysis.ranked.reduce((sum, item) => {
+      const expectation = traitExpectation(item.candidate, question.tag);
+      const yesChance = expectation === null ? 0.5 : expectation ? 1 : 0;
+      return sum + item.probability * yesChance;
+    }, 0);
 
     // Avoid nearly-certain questions; they add little information and feel repetitive.
     if (yesProbability <= 0.045 || yesProbability >= 0.955) continue;
