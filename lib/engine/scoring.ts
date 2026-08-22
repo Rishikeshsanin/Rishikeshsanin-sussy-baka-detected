@@ -56,8 +56,6 @@ function answerLikelihood(answer: AnswerType, expected: boolean | null): number 
       return expected ? 0.74 : 0.26;
     case "probably_not":
       return expected ? 0.26 : 0.74;
-    case "unknown":
-      return 0.5;
   }
 }
 
