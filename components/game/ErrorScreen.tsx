@@ -18,21 +18,21 @@ export function ErrorScreen({ message, retrying = false, onRetry, onHome }: Erro
         <OracleOrb mode={retrying ? "thinking" : "dim"} size="medium" />
       </div>
       <span className="mx-auto inline-flex items-center gap-2 rounded-full border border-amber-200/10 bg-amber-200/[0.04] px-3 py-1.5 text-[0.62rem] font-semibold uppercase tracking-[0.19em] text-amber-100/62">
-        <TriangleAlert size={13} /> Connection interrupted
+        <TriangleAlert size={13} /> detector signal lost
       </span>
-      <h1 className="mt-5 text-3xl font-semibold tracking-[-0.045em] text-white sm:text-4xl">
-        The mind-reading crystal needs a moment.
+      <h1 className="mt-5 text-3xl font-black tracking-[-0.045em] text-white sm:text-4xl">
+        The detector lagged IRL. 💀
       </h1>
       <p className="mx-auto mt-4 max-w-md text-sm leading-6 text-white/44">
-        {message ?? "Your answers are safe. We can try the same turn again when the signal settles."}
+        {message ?? "Your answers are safe. Run the same turn again when the signal comes back."}
       </p>
       <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
         <button type="button" onClick={onRetry} disabled={retrying} className="primary-button min-w-40">
           <RefreshCw className={retrying ? "animate-spin" : ""} size={16} />
-          {retrying ? "Trying again" : "Try again"}
+          {retrying ? "Reconnecting" : "Run it again"}
         </button>
         <button type="button" onClick={onHome} className="secondary-button min-w-40">
-          <Home size={16} /> Return home
+          <Home size={16} /> Abort mission
         </button>
       </div>
     </section>

@@ -1,9 +1,11 @@
 export const brand = {
-  name: "Veyra",
-  eyebrow: "The Character Oracle",
-  tagline: "Keep them in mind. I’ll follow the clues.",
+  name: "Sussy Baka Detected",
+  shortName: "SBD",
+  eyebrow: "The chronically-online guessing game",
+  tagline: "Think of someone. Don’t snitch.",
   description:
-    "Think of a real person or fictional character. Don’t tell me who it is. I’ll try to figure it out.",
+    "Pick a real person or fictional character, keep the name in your head, and answer a few questions while the detector tries to clock them.",
   maxQuestions: 30,
-  storageKey: "veyra.game.v1",
+  targetQuestions: "around 20",
+  storageKey: "sussy-baka-detected.game.v2",
 } as const;

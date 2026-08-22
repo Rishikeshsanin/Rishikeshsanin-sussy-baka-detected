@@ -17,15 +17,15 @@ export default function Icon() {
         alignItems: "center",
         justifyContent: "center",
         borderRadius: 18,
-        color: "#f7f5ff",
-        background: "linear-gradient(145deg, #8d73e7, #31265f 64%, #173f43)",
-        boxShadow: "inset 0 2px 5px rgba(255,255,255,.26)",
-        fontSize: 34,
-        fontWeight: 700,
+        color: "#0a0d08",
+        background: "linear-gradient(145deg, #eaffba, #c8ff68 52%, #70f4ea)",
+        boxShadow: "inset 0 2px 5px rgba(255,255,255,.44)",
+        fontSize: 27,
+        fontWeight: 900,
         letterSpacing: "-0.08em",
       }}
     >
-      V
+      SBD
     </div>,
     size,
   );

@@ -12,6 +12,7 @@ type QuestionScreenProps = {
   questionNumber: number;
   question: string | null;
   confidence: number;
+  reaction: string;
   thinking: boolean;
   canUndo: boolean;
   onAnswer: (answer: AnswerType) => void;
@@ -24,6 +25,7 @@ export function QuestionScreen({
   questionNumber,
   question,
   confidence,
+  reaction,
   thinking,
   canUndo,
   onAnswer,
@@ -32,21 +34,25 @@ export function QuestionScreen({
   onRestart,
 }: QuestionScreenProps) {
   return (
-    <div className="screen-enter game-panel glass-card">
+    <div className="screen-enter game-panel glass-card sbd-game-panel">
       <div className="grid items-center gap-2 sm:grid-cols-[9.5rem_1fr_9.5rem]">
         <div className="hidden justify-self-start sm:block">
           <OracleOrb mode={thinking ? "thinking" : "resting"} size="small" />
         </div>
         <div className="text-center">
-          <p className="eyebrow-label">{thinking ? "Reading your answer" : `Question ${questionNumber}`}</p>
-          <p className="mt-2 text-xs text-white/30">Answer from your first instinct</p>
+          <p className="eyebrow-label">{thinking ? "Detector is cooking" : `Question ${questionNumber}`}</p>
+          <p className="mt-2 text-xs text-white/30">first instinct &gt; overthinking</p>
         </div>
         <div className="mt-3 w-full justify-self-end sm:mt-0">
           <FocusMeter confidence={confidence} compact />
         </div>
       </div>
 
-      <div className="question-card mt-3 sm:mt-1">
+      <div className="mx-auto mt-3 flex min-h-8 items-center justify-center">
+        <p className="meme-reaction" aria-live="polite">{reaction}</p>
+      </div>
+
+      <div className="question-card mt-2 sm:mt-1">
         {thinking ? (
           <ThinkingState />
         ) : (
