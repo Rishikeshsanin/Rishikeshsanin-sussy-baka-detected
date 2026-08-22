@@ -1,7 +1,9 @@
 "use client";
 
 import { History, RotateCcw, Trophy } from "lucide-react";
+import { useEffect } from "react";
 
+import { submitCurrentGameFeedback } from "@/lib/game/feedback.client";
 import { getWinReaction } from "@/lib/game/reactions";
 
 import { OracleOrb } from "./OracleOrb";
@@ -21,6 +23,10 @@ export function WinScreen({
   onPlayAgain,
   onHistory,
 }: WinScreenProps) {
+  useEffect(() => {
+    void submitCurrentGameFeedback("correct_guess", name);
+  }, [name]);
+
   return (
     <section className="screen-enter glass-card sbd-win relative w-full max-w-3xl overflow-hidden rounded-[2rem] px-5 py-8 text-center sm:px-10 sm:py-10">
       <div className="mx-auto -mb-4 flex justify-center">
