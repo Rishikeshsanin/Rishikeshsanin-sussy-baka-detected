@@ -73,8 +73,16 @@ export async function savePersistentSearchCandidates(
   const sql = getSbdDatabase();
   if (!sql) return;
 
-  const safeCandidates = candidates.slice(0, MAX_PERSISTED_CANDIDATES);
-  const payload = JSON.stringify(safeCandidates);
+  const jsonCandidates = candidates.slice(0, MAX_PERSISTED_CANDIDATES).map((candidate) => ({
+    name: candidate.name,
+    tags: [...candidate.tags],
+    prior: candidate.prior ?? null,
+    source: candidate.source ?? null,
+    sourceId: candidate.sourceId ?? null,
+    description: candidate.description ?? null,
+    wikipediaTitle: candidate.wikipediaTitle ?? null,
+    popularityScore: candidate.popularityScore ?? null,
+  }));
 
   try {
     await sql`
@@ -89,7 +97,7 @@ export async function savePersistentSearchCandidates(
         ${cacheKey},
         ${plan.primaryQuery},
         ${plan.secondaryQuery ?? null},
-        ${payload}::jsonb,
+        ${sql.json(jsonCandidates)},
         now(),
         now() + (${SEARCH_CACHE_TTL_HOURS} * interval '1 hour')
       )
@@ -183,7 +191,7 @@ export async function upsertLearnedCandidate(candidate: CandidateProfile): Promi
         ${candidate.description ?? null},
         ${sql.array([...candidate.tags])}::text[],
         ${Math.max(0, candidate.popularityScore ?? 0)},
-        ${JSON.stringify({ verifiedBy: "wikidata", learnedFrom: "give_up_reveal" })}::jsonb,
+        ${sql.json({ verifiedBy: "wikidata", learnedFrom: "give_up_reveal" })},
         now(),
         null
       )
