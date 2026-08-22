@@ -139,7 +139,7 @@ function errorResponse(
   code: AIErrorCode,
   message: string,
   status: number,
-  extraHeaders?: HeadersInit,
+  extraHeaders?: Record<string, string>,
 ): Response {
   const body: APIErrorBody = { error: { code, message } };
   return Response.json(body, {
@@ -148,7 +148,7 @@ function errorResponse(
   });
 }
 
-function responseHeaders(extraHeaders?: HeadersInit): HeadersInit {
+function responseHeaders(extraHeaders?: Record<string, string>): Record<string, string> {
   return {
     "cache-control": "no-store",
     "x-content-type-options": "nosniff",
