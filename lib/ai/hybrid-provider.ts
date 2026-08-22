@@ -1,4 +1,5 @@
 import { getGuessConfidenceThreshold } from "@/lib/game/guess-policy";
+import { selectRecoveryQuestion } from "@/lib/engine/recovery-question";
 import {
   analyzeCandidates,
   selectBestQuestion,
@@ -6,11 +7,12 @@ import {
   topCandidateNames,
 } from "@/lib/engine/scoring";
 
-import type {
-  AIProvider,
-  AIProviderContext,
-  GameAIResponse,
-  GuessAIResponse,
+import {
+  AIError,
+  type AIProvider,
+  type AIProviderContext,
+  type GameAIResponse,
+  type GuessAIResponse,
 } from "./types";
 
 /**
@@ -85,22 +87,75 @@ export class HybridProvider implements AIProvider {
       ? "The curated seed pool already produced a rejected guess. Explore outside that shortlist and trust the full answer history."
       : memorySummary;
 
-    const fallbackResult = await this.fallback.playTurn({
-      ...context,
-      aiMemory: {
-        summary: [context.aiMemory.summary, escapeNote].filter(Boolean).join(" ").slice(0, 1_200),
-        candidateHypotheses: rejectedLocalGuess
-          ? []
-          : hypotheses.length > 0
-            ? hypotheses
-            : context.aiMemory.candidateHypotheses,
-      },
-    });
+    try {
+      const fallbackResult = await this.fallback.playTurn({
+        ...context,
+        aiMemory: {
+          summary: [context.aiMemory.summary, escapeNote].filter(Boolean).join(" ").slice(0, 1_200),
+          candidateHypotheses: rejectedLocalGuess
+            ? []
+            : hypotheses.length > 0
+              ? hypotheses
+              : context.aiMemory.candidateHypotheses,
+        },
+      });
 
-    return fallbackResult.type === "guess"
-      ? calibrateFallbackGuess(fallbackResult, context)
-      : fallbackResult;
+      return fallbackResult.type === "guess"
+        ? calibrateFallbackGuess(fallbackResult, context)
+        : fallbackResult;
+    } catch (error) {
+      if (!isRecoverableProviderFailure(error)) {
+        throw error;
+      }
+
+      console.warn("[hybrid] AI assist unavailable; continuing with local deduction", {
+        code: error.code,
+        completedAnswers: context.history.length,
+      });
+
+      // An upstream outage must not become a dead-end screen. Re-enter the local
+      // question engine even if we previously wanted to escape the seed pool.
+      const localNext = selectBestQuestion(context.history, context.rejectedGuesses);
+      if (localNext) {
+        return {
+          type: "question",
+          question: localNext.question.text,
+          questionId: localNext.question.id,
+          confidence: analysis.confidence,
+          memorySummary: `${memorySummary} AI assist is temporarily unavailable; continuing locally.`.slice(0, 1_200),
+          candidateHypotheses: hypotheses,
+        };
+      }
+
+      const recovery = selectRecoveryQuestion(context.history);
+      if (recovery) {
+        return {
+          type: "question",
+          question: recovery.question,
+          questionId: recovery.questionId,
+          confidence: analysis.confidence,
+          memorySummary: `${memorySummary} AI assist is temporarily unavailable; collecting recovery evidence.`.slice(0, 1_200),
+          candidateHypotheses: hypotheses,
+        };
+      }
+
+      return {
+        type: "give_up",
+        message: "My live lookup is taking a nap and I used every useful local clue. You got me — who were you thinking of?",
+        confidence: 0,
+        memorySummary,
+      };
+    }
   }
+}
+
+function isRecoverableProviderFailure(error: unknown): error is AIError {
+  return error instanceof AIError && (
+    error.code === "NETWORK_ERROR" ||
+    error.code === "RATE_LIMITED" ||
+    error.code === "AI_UNAVAILABLE" ||
+    error.code === "INVALID_AI_RESPONSE"
+  );
 }
 
 /**

@@ -1,6 +1,7 @@
 import type { AnswerType, GameAnswer } from "@/lib/game/types";
 
 import { CANDIDATES, type CandidateProfile } from "./candidates";
+import { EXTRA_CANDIDATES } from "./extra-candidates";
 import { QUESTION_BY_ID, TRAIT_QUESTIONS, type TraitQuestion } from "./questions";
 
 export interface RankedCandidate {
@@ -20,6 +21,7 @@ export interface CandidateAnalysis {
 }
 
 const EPSILON = 1e-12;
+const ALL_CANDIDATES = [...CANDIDATES, ...EXTRA_CANDIDATES] as const;
 
 function clamp(value: number, min = 0, max = 1): number {
   return Math.min(max, Math.max(min, value));
@@ -59,7 +61,7 @@ export function analyzeCandidates(
     .map((answer) => ({ answer, question: QUESTION_BY_ID.get(answer.questionId) }))
     .filter((entry): entry is { answer: GameAnswer; question: TraitQuestion } => Boolean(entry.question));
 
-  const scored = CANDIDATES
+  const scored = ALL_CANDIDATES
     .filter((candidate) => !rejected.has(normalizedGuess(candidate.name)))
     .map((candidate) => {
       let logScore = Math.log(candidate.prior ?? 1);
