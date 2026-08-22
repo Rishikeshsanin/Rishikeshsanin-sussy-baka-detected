@@ -2,10 +2,17 @@ import { getGuessConfidenceThreshold } from "@/lib/game/guess-policy";
 import { selectRecoveryQuestion } from "@/lib/engine/recovery-question";
 import {
   analyzeCandidates,
+  mergeCandidatePools,
+  SEED_CANDIDATES,
   selectBestQuestion,
   summarizeAnalysis,
   topCandidateNames,
 } from "@/lib/engine/scoring";
+import {
+  discoverKnowledgeCandidates,
+  shouldAttemptKnowledgeDiscovery,
+  type KnowledgeDiscovery,
+} from "@/lib/knowledge/discovery.server";
 
 import {
   AIError,
@@ -15,34 +22,75 @@ import {
   type GuessAIResponse,
 } from "./types";
 
+type KnowledgeDiscoveryFn = (
+  history: AIProviderContext["history"],
+  signal?: AbortSignal,
+) => Promise<KnowledgeDiscovery | null>;
+
 /**
  * Hybrid deduction engine:
- * 1) deterministic Bayesian-style candidate ranking over a curated seed pool,
- * 2) entropy-based question selection,
- * 3) configured LLM fallback when the local knowledge base is weak/exhausted.
+ * 1) deterministic Bayesian-style ranking over a bundled hot pool,
+ * 2) live Wikimedia/Wikidata candidate discovery when enough evidence exists,
+ * 3) entropy-based question selection over the combined pool,
+ * 4) configured LLM recovery for semantic/long-tail gaps.
  *
- * The public provider name intentionally remains the underlying provider name so
- * existing diagnostics/configuration do not need a new environment enum.
+ * External knowledge and AI are both optional accelerators: an upstream outage
+ * must never end a playable round while useful local/recovery questions remain.
  */
 export class HybridProvider implements AIProvider {
   readonly name: AIProvider["name"];
 
-  constructor(private readonly fallback: AIProvider) {
+  constructor(
+    private readonly fallback: AIProvider,
+    private readonly discoverKnowledge: KnowledgeDiscoveryFn = discoverKnowledgeCandidates,
+  ) {
     this.name = fallback.name;
   }
 
   async playTurn(context: AIProviderContext): Promise<GameAIResponse> {
-    const analysis = analyzeCandidates(context.history, context.rejectedGuesses);
+    const seedAnalysis = analyzeCandidates(
+      context.history,
+      context.rejectedGuesses,
+      SEED_CANDIDATES,
+    );
+
+    let candidatePool = [...SEED_CANDIDATES];
+    let discovery: KnowledgeDiscovery | null = null;
+
+    if (
+      shouldAttemptKnowledgeDiscovery(
+        context.history,
+        seedAnalysis,
+        context.rejectedGuesses,
+      )
+    ) {
+      discovery = await this.discoverKnowledge(context.history, context.signal);
+      if (discovery?.candidates.length) {
+        candidatePool = mergeCandidatePools(SEED_CANDIDATES, discovery.candidates);
+        console.info("[knowledge] live candidates joined the round", {
+          discovered: discovery.candidates.length,
+          combined: candidatePool.length,
+          durationMs: discovery.durationMs,
+          query: discovery.plan.primaryQuery.slice(0, 80),
+        });
+      }
+    }
+
+    const analysis = analyzeCandidates(
+      context.history,
+      context.rejectedGuesses,
+      candidatePool,
+    );
     const hypotheses = topCandidateNames(analysis);
     const memorySummary = summarizeAnalysis(analysis);
 
     const rejectedLocalGuess = context.rejectedGuesses.length >= 1;
-    const shouldEscapeLocalPool =
+    const shouldEscapeStructuredPool =
       rejectedLocalGuess ||
       (context.history.length >= 14 && analysis.confidence < 0.58) ||
       analysis.ranked.length < 2;
 
-    if (!shouldEscapeLocalPool && context.turnReason !== "rejected_guess") {
+    if (!shouldEscapeStructuredPool && context.turnReason !== "rejected_guess") {
       const threshold = getGuessConfidenceThreshold(context.history.length);
       const top = analysis.ranked[0];
       const enoughSeparation =
@@ -66,8 +114,12 @@ export class HybridProvider implements AIProvider {
       }
     }
 
-    if (!shouldEscapeLocalPool) {
-      const next = selectBestQuestion(context.history, context.rejectedGuesses);
+    if (!shouldEscapeStructuredPool) {
+      const next = selectBestQuestion(
+        context.history,
+        context.rejectedGuesses,
+        candidatePool,
+      );
       if (next) {
         return {
           type: "question",
@@ -80,20 +132,29 @@ export class HybridProvider implements AIProvider {
       }
     }
 
-    // The LLM is a recovery/long-tail layer, not the whole deduction engine.
-    // If our curated pool already guessed wrong, clear its shortlist so the LLM
-    // is explicitly encouraged to explore outside the seed database.
+    // The LLM is a recovery layer, not the knowledge base. Candidate hypotheses
+    // now include verified Wikimedia discoveries when available, giving Gemini a
+    // compact shortlist without delegating confidence/calibration to the model.
     const escapeNote = rejectedLocalGuess
-      ? "The curated seed pool already produced a rejected guess. Explore outside that shortlist and trust the full answer history."
-      : memorySummary;
+      ? "A previous guess was rejected. Explore beyond that candidate and trust the full answer history."
+      : discovery?.candidates.length
+        ? `${memorySummary} Live Wikimedia discovery added ${discovery.candidates.length} verified entities.`
+        : memorySummary;
 
     try {
       const fallbackResult = await this.fallback.playTurn({
         ...context,
         aiMemory: {
-          summary: [context.aiMemory.summary, escapeNote].filter(Boolean).join(" ").slice(0, 1_200),
+          summary: [context.aiMemory.summary, escapeNote]
+            .filter(Boolean)
+            .join(" ")
+            .slice(0, 1_200),
           candidateHypotheses: rejectedLocalGuess
-            ? []
+            ? hypotheses.filter(
+                (name) => !context.rejectedGuesses.some(
+                  (rejected) => rejected.toLocaleLowerCase("en-US") === name.toLocaleLowerCase("en-US"),
+                ),
+              )
             : hypotheses.length > 0
               ? hypotheses
               : context.aiMemory.candidateHypotheses,
@@ -108,21 +169,26 @@ export class HybridProvider implements AIProvider {
         throw error;
       }
 
-      console.warn("[hybrid] AI assist unavailable; continuing with local deduction", {
+      console.warn("[hybrid] AI assist unavailable; continuing with structured deduction", {
         code: error.code,
         completedAnswers: context.history.length,
+        knowledgeCandidates: discovery?.candidates.length ?? 0,
       });
 
-      // An upstream outage must not become a dead-end screen. Re-enter the local
-      // question engine even if we previously wanted to escape the seed pool.
-      const localNext = selectBestQuestion(context.history, context.rejectedGuesses);
-      if (localNext) {
+      // Re-enter the combined structured pool even if the policy previously
+      // wanted to escape it. This keeps upstream AI failures invisible to users.
+      const structuredNext = selectBestQuestion(
+        context.history,
+        context.rejectedGuesses,
+        candidatePool,
+      );
+      if (structuredNext) {
         return {
           type: "question",
-          question: localNext.question.text,
-          questionId: localNext.question.id,
+          question: structuredNext.question.text,
+          questionId: structuredNext.question.id,
           confidence: analysis.confidence,
-          memorySummary: `${memorySummary} AI assist is temporarily unavailable; continuing locally.`.slice(0, 1_200),
+          memorySummary: `${memorySummary} AI assist is temporarily unavailable; continuing with verified/local candidates.`.slice(0, 1_200),
           candidateHypotheses: hypotheses,
         };
       }
@@ -134,14 +200,14 @@ export class HybridProvider implements AIProvider {
           question: recovery.question,
           questionId: recovery.questionId,
           confidence: analysis.confidence,
-          memorySummary: `${memorySummary} AI assist is temporarily unavailable; collecting recovery evidence.`.slice(0, 1_200),
+          memorySummary: `${memorySummary} Collecting one more structured clue while AI assist recovers.`.slice(0, 1_200),
           candidateHypotheses: hypotheses,
         };
       }
 
       return {
         type: "give_up",
-        message: "My live lookup is taking a nap and I used every useful local clue. You got me — who were you thinking of?",
+        message: "You survived every clue I had. Who were you thinking of?",
         confidence: 0,
         memorySummary,
       };
@@ -162,9 +228,6 @@ function isRecoverableProviderFailure(error: unknown): error is AIError {
  * LLM confidence is not a calibrated probability. We therefore treat it only as
  * an upper-bound hint and cap it by evidence depth. The normal server-side guess
  * policy still validates the returned value after this function runs.
- *
- * Early long-tail guesses are deliberately forced below the policy threshold,
- * causing the provider validator to request another discriminating question.
  */
 export function calibrateFallbackGuess(
   guess: GuessAIResponse,
