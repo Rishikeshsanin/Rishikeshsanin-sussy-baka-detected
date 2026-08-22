@@ -40,3 +40,33 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+      - name: Production runtime smoke test
+        shell: bash
+        run: |
+          npm run start > /tmp/sbd-next.log 2>&1 &
+          SERVER_PID=$!
+          trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+
+          READY=0
+          for attempt in {1..30}; do
+            if curl --fail --silent --show-error http://127.0.0.1:3000/ > /tmp/sbd-home.html; then
+              READY=1
+              break
+            fi
+            sleep 1
+          done
+
+          if [ "$READY" -ne 1 ]; then
+            cat /tmp/sbd-next.log
+            exit 1
+          fi
+
+          grep -q "Sussy Baka Detected" /tmp/sbd-home.html
+
+          curl --fail --silent --show-error \
+            -H 'content-type: application/json' \
+            -d '{"gameId":"ci-smoke","questionNumber":1,"history":[{"questionId":"first-real-person","question":"Is your character a real person?","answer":"yes","timestamp":1}],"rejectedGuesses":[],"aiMemory":{"summary":"","candidateHypotheses":[]},"turnReason":"answer"}' \
+            http://127.0.0.1:3000/api/game/turn > /tmp/sbd-turn.json
+
+          node -e 'const fs=require("fs"); const data=JSON.parse(fs.readFileSync("/tmp/sbd-turn.json","utf8")); if(!["question","guess","give_up"].includes(data.type)) process.exit(1);'
