@@ -3,6 +3,8 @@
 import { Crown, RotateCcw, Send } from "lucide-react";
 import { useState } from "react";
 
+import { submitCurrentGameFeedback } from "@/lib/game/feedback.client";
+
 import { OracleOrb } from "./OracleOrb";
 
 type GiveUpScreenProps = {
@@ -32,7 +34,7 @@ export function GiveUpScreen({ message, submittedName, onSubmitName, onPlayAgain
 
       {submittedName ? (
         <div className="rounded-2xl border border-cyan-200/10 bg-cyan-200/[0.04] px-5 py-4 text-sm text-cyan-50/66">
-          Okay, <span className="font-semibold text-white">{submittedName}</span>. Lore acquired. This reveal stays on your device for now.
+          Okay, <span className="font-semibold text-white">{submittedName}</span>. Lore received. If Wikidata verifies it, future rounds can learn from the miss.
         </div>
       ) : (
         <form
@@ -40,7 +42,9 @@ export function GiveUpScreen({ message, submittedName, onSubmitName, onPlayAgain
           onSubmit={(event) => {
             event.preventDefault();
             const cleaned = name.trim();
-            if (cleaned) onSubmitName(cleaned);
+            if (!cleaned) return;
+            void submitCurrentGameFeedback("revealed_after_give_up", cleaned);
+            onSubmitName(cleaned);
           }}
         >
           <label htmlFor="secret-character" className="mb-2 block text-xs font-medium text-white/52">
