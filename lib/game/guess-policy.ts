@@ -3,6 +3,8 @@ import type { GameAnswer } from "./types";
 
 export const REQUIRED_CONFIRMATION_ANSWERS = 2;
 export const MIN_GUESS_ANSWERS = 8;
+export const MIN_REAL_GIVE_UP_ANSWERS = 26;
+export const MIN_FICTIONAL_GIVE_UP_ANSWERS = 28;
 const CONFIRMATION_PREFIX = "confirm_";
 const CONFIRMATION_SEPARATOR = "__";
 
@@ -15,7 +17,6 @@ export function getGuessConfidenceThreshold(answerCount: number): number | null 
     return null;
   }
 
-  // SBD should prefer one or two extra useful questions over a flashy early miss.
   if (answerCount <= 12) return 0.95;
   if (answerCount <= 20) return 0.88;
   if (answerCount <= 25) return 0.82;
@@ -94,6 +95,16 @@ export function hasEnoughConfirmationEvidence(
 ): boolean {
   const evidence = candidateConfirmationEvidence(history, candidateName);
   return evidence.negative === 0 && evidence.positive >= REQUIRED_CONFIRMATION_ANSWERS;
+}
+
+export function minimumGiveUpAnswers(history: readonly GameAnswer[]): number {
+  const first = history.find((entry) => entry.questionId === "first-real-person")?.answer;
+  const fictional = first === "no" || first === "probably_not";
+  return fictional ? MIN_FICTIONAL_GIVE_UP_ANSWERS : MIN_REAL_GIVE_UP_ANSWERS;
+}
+
+export function canGiveUp(history: readonly GameAnswer[]): boolean {
+  return history.length >= minimumGiveUpAnswers(history);
 }
 
 export function isRejectedGuess(name: string, rejectedGuesses: readonly string[]): boolean {
