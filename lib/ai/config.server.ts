@@ -1,5 +1,7 @@
 import "server-only";
 
+import { discoverKnowledgeCandidates } from "@/lib/knowledge/discovery.server";
+
 import { GeminiProvider, DEFAULT_GEMINI_MODEL } from "./gemini-provider";
 import { HybridProvider } from "./hybrid-provider";
 import { MockProvider } from "./mock-provider";
@@ -34,7 +36,7 @@ export function getConfiguredAIProvider(): AIProvider {
       break;
   }
 
-  return new HybridProvider(fallback);
+  return new HybridProvider(fallback, discoverKnowledgeCandidates);
 }
 
 export function getAITurnTimeoutMs(): number {

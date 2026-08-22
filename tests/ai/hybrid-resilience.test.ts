@@ -21,7 +21,7 @@ function baseContext(): AIProviderContext {
 }
 
 describe("HybridProvider resilience", () => {
-  it("continues with a local question when the external AI is unavailable", async () => {
+  it("continues with a structured question when the external AI is unavailable", async () => {
     const fallback: AIProvider & { playTurn: ReturnType<typeof vi.fn> } = {
       name: "gemini",
       playTurn: vi.fn(async () => {
@@ -36,7 +36,7 @@ describe("HybridProvider resilience", () => {
     expect(result.type).toBe("question");
     if (result.type === "question") {
       expect(result.question).toMatch(/\?$/);
-      expect(result.memorySummary).toMatch(/continuing locally|recovery evidence/i);
+      expect(result.memorySummary).toMatch(/verified\/local candidates|recovery evidence|collecting one more structured clue/i);
     }
   });
 });

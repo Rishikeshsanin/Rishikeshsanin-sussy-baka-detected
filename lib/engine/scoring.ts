@@ -3,6 +3,7 @@ import type { AnswerType, GameAnswer } from "@/lib/game/types";
 import { CANDIDATES, type CandidateProfile } from "./candidates";
 import { EXTRA_CANDIDATES } from "./extra-candidates";
 import { QUESTION_BY_ID, TRAIT_QUESTIONS, type TraitQuestion } from "./questions";
+import { RECOVERY_QUESTION_BY_ID } from "./recovery-question";
 
 export interface RankedCandidate {
   candidate: CandidateProfile;
@@ -21,13 +22,31 @@ export interface CandidateAnalysis {
 }
 
 const EPSILON = 1e-12;
-const ALL_CANDIDATES = [...CANDIDATES, ...EXTRA_CANDIDATES] as const;
+export const SEED_CANDIDATES: readonly CandidateProfile[] = [
+  ...CANDIDATES,
+  ...EXTRA_CANDIDATES,
+];
+
+const DERIVED_TAGS: Record<string, readonly string[]> = {
+  asia: ["india", "pakistan", "bangladesh", "sri_lanka", "afghanistan", "japan", "korea"],
+  oceania: ["australia", "new_zealand"],
+  north_america: ["usa", "canada"],
+  africa: ["south_africa"],
+};
+
+const EXCLUSIVE_GROUPS: readonly (readonly string[])[] = [
+  ["real", "fictional"],
+  ["man", "woman"],
+  ["born_before_1980", "born_after_1980"],
+];
 
 function clamp(value: number, min = 0, max = 1): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function answerLikelihood(answer: AnswerType, expected: boolean): number {
+function answerLikelihood(answer: AnswerType, expected: boolean | null): number {
+  if (answer === "unknown" || expected === null) return 0.5;
+
   switch (answer) {
     case "yes":
       return expected ? 0.94 : 0.06;
@@ -37,12 +56,10 @@ function answerLikelihood(answer: AnswerType, expected: boolean): number {
       return expected ? 0.74 : 0.26;
     case "probably_not":
       return expected ? 0.26 : 0.74;
-    case "unknown":
-      return 0.5;
   }
 }
 
-function normalizedGuess(name: string): string {
+export function normalizeCandidateName(name: string): string {
   return name
     .normalize("NFKD")
     .toLocaleLowerCase("en-US")
@@ -52,21 +69,98 @@ function normalizedGuess(name: string): string {
     .replace(/\s+/g, " ");
 }
 
+export function candidateHasTag(candidate: CandidateProfile, tag: string): boolean {
+  if (candidate.tags.includes(tag)) return true;
+  return (DERIVED_TAGS[tag] ?? []).some((sourceTag) => candidate.tags.includes(sourceTag));
+}
+
+/**
+ * Live Wikimedia candidates use an open-world model: a missing extracted tag is
+ * usually "unknown", not proof that the trait is false. Bundled seed candidates
+ * are curated densely enough to keep the original closed-world behavior.
+ */
+function traitExpectation(candidate: CandidateProfile, tag: string): boolean | null {
+  if (candidateHasTag(candidate, tag)) return true;
+
+  const openWorld = candidate.source === "wikimedia" || candidate.source === "learned";
+  if (!openWorld) return false;
+
+  for (const group of EXCLUSIVE_GROUPS) {
+    if (!group.includes(tag)) continue;
+    if (group.some((other) => other !== tag && candidateHasTag(candidate, other))) {
+      return false;
+    }
+  }
+
+  if (tag === "born_after_2000" && candidateHasTag(candidate, "born_before_1980")) return false;
+  if (tag === "alive" && candidateHasTag(candidate, "historical")) return false;
+  if (tag === "historical" && candidateHasTag(candidate, "alive")) return false;
+
+  return null;
+}
+
+/**
+ * Merge candidate pools without allowing live discovery to duplicate a bundled
+ * seed candidate. The higher prior wins and structured tags are unioned.
+ */
+export function mergeCandidatePools(
+  ...pools: readonly (readonly CandidateProfile[])[]
+): CandidateProfile[] {
+  const merged = new Map<string, CandidateProfile>();
+
+  for (const pool of pools) {
+    for (const candidate of pool) {
+      const key = normalizeCandidateName(candidate.name);
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, candidate);
+        continue;
+      }
+
+      merged.set(key, {
+        ...candidate,
+        ...existing,
+        tags: [...new Set([...existing.tags, ...candidate.tags])],
+        prior: Math.max(existing.prior ?? 1, candidate.prior ?? 1),
+        popularityScore: Math.max(
+          existing.popularityScore ?? 0,
+          candidate.popularityScore ?? 0,
+        ),
+        source: existing.source === "seed" ? "seed" : candidate.source ?? existing.source,
+        sourceId: existing.sourceId ?? candidate.sourceId,
+        wikipediaTitle: existing.wikipediaTitle ?? candidate.wikipediaTitle,
+        description: existing.description ?? candidate.description,
+      });
+    }
+  }
+
+  return [...merged.values()];
+}
+
+interface ScoringQuestion {
+  tag: string;
+}
+
+function scoringQuestionForId(questionId: string): ScoringQuestion | undefined {
+  return QUESTION_BY_ID.get(questionId) ?? RECOVERY_QUESTION_BY_ID.get(questionId);
+}
+
 export function analyzeCandidates(
   history: readonly GameAnswer[],
   rejectedGuesses: readonly string[] = [],
+  candidates: readonly CandidateProfile[] = SEED_CANDIDATES,
 ): CandidateAnalysis {
-  const rejected = new Set(rejectedGuesses.map(normalizedGuess));
+  const rejected = new Set(rejectedGuesses.map(normalizeCandidateName));
   const recognized = history
-    .map((answer) => ({ answer, question: QUESTION_BY_ID.get(answer.questionId) }))
-    .filter((entry): entry is { answer: GameAnswer; question: TraitQuestion } => Boolean(entry.question));
+    .map((answer) => ({ answer, question: scoringQuestionForId(answer.questionId) }))
+    .filter((entry): entry is { answer: GameAnswer; question: ScoringQuestion } => Boolean(entry.question));
 
-  const scored = ALL_CANDIDATES
-    .filter((candidate) => !rejected.has(normalizedGuess(candidate.name)))
+  const scored = candidates
+    .filter((candidate) => !rejected.has(normalizeCandidateName(candidate.name)))
     .map((candidate) => {
-      let logScore = Math.log(candidate.prior ?? 1);
+      let logScore = Math.log(Math.max(candidate.prior ?? 1, 0.05));
       for (const { answer, question } of recognized) {
-        const expected = candidate.tags.includes(question.tag);
+        const expected = traitExpectation(candidate, question.tag);
         logScore += Math.log(answerLikelihood(answer.answer, expected) + EPSILON);
       }
       return { candidate, logScore };
@@ -105,7 +199,7 @@ export function analyzeCandidates(
   const unknownPenalty = clamp(history.filter((entry) => entry.answer === "unknown").length / 10) * 0.16;
 
   // This is a game-confidence heuristic derived from the posterior distribution,
-  // margin, and amount of structured evidence. It is not supplied by an LLM.
+  // margin, and amount of structured evidence. It is never supplied by an LLM.
   const confidence = clamp(
     topProbability * 0.72 + margin * 0.34 + evidenceFactor * 0.18 - unknownPenalty,
   );
@@ -129,8 +223,9 @@ function binaryEntropy(probability: number): number {
 export function selectBestQuestion(
   history: readonly GameAnswer[],
   rejectedGuesses: readonly string[] = [],
+  candidates: readonly CandidateProfile[] = SEED_CANDIDATES,
 ): { question: TraitQuestion; informationGain: number } | null {
-  const analysis = analyzeCandidates(history, rejectedGuesses);
+  const analysis = analyzeCandidates(history, rejectedGuesses, candidates);
   if (analysis.ranked.length < 2) return null;
 
   const askedIds = new Set(history.map((entry) => entry.questionId));
@@ -139,10 +234,11 @@ export function selectBestQuestion(
   for (const question of TRAIT_QUESTIONS) {
     if (askedIds.has(question.id)) continue;
 
-    const yesProbability = analysis.ranked.reduce(
-      (sum, item) => sum + (item.candidate.tags.includes(question.tag) ? item.probability : 0),
-      0,
-    );
+    const yesProbability = analysis.ranked.reduce((sum, item) => {
+      const expectation = traitExpectation(item.candidate, question.tag);
+      const yesChance = expectation === null ? 0.5 : expectation ? 1 : 0;
+      return sum + item.probability * yesChance;
+    }, 0);
 
     // Avoid nearly-certain questions; they add little information and feel repetitive.
     if (yesProbability <= 0.045 || yesProbability >= 0.955) continue;
@@ -162,6 +258,6 @@ export function topCandidateNames(analysis: CandidateAnalysis, limit = 8): strin
 
 export function summarizeAnalysis(analysis: CandidateAnalysis): string {
   const top = topCandidateNames(analysis, 4);
-  if (top.length === 0) return "The deterministic candidate pool has no viable candidates.";
-  return `Structured evidence matched ${analysis.recognizedAnswers} question${analysis.recognizedAnswers === 1 ? "" : "s"}. Current local shortlist: ${top.join(", ")}.`;
+  if (top.length === 0) return "The structured candidate pool has no viable candidates.";
+  return `Structured evidence matched ${analysis.recognizedAnswers} question${analysis.recognizedAnswers === 1 ? "" : "s"}. Current shortlist: ${top.join(", ")}.`;
 }

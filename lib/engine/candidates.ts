@@ -1,28 +1,38 @@
+export type CandidateSource = "seed" | "wikimedia" | "learned";
+
 export interface CandidateProfile {
   name: string;
   tags: readonly string[];
   /** Slightly higher priors are reserved for extremely common guesses. */
   prior?: number;
+  /** Optional provenance for candidates discovered outside the bundled hot pool. */
+  source?: CandidateSource;
+  sourceId?: string;
+  description?: string;
+  wikipediaTitle?: string;
+  popularityScore?: number;
 }
 
 const real = (name: string, tags: readonly string[], prior?: number): CandidateProfile => ({
   name,
   tags: ["real", ...tags],
   prior,
+  source: "seed",
 });
 
 const fictional = (name: string, tags: readonly string[], prior?: number): CandidateProfile => ({
   name,
   tags: ["fictional", ...tags],
   prior,
+  source: "seed",
 });
 
 /**
  * Curated high-frequency seed pool.
  *
  * This is deliberately not the complete knowledge base. The hybrid engine uses
- * this pool for deterministic probability + information-gain turns and falls
- * back to the configured LLM for people/characters outside it.
+ * this pool for deterministic probability + information-gain turns and augments
+ * it with live Wikimedia discovery for people/characters outside the hot set.
  */
 export const CANDIDATES: readonly CandidateProfile[] = [
   // Cricket / India
@@ -130,58 +140,40 @@ export const CANDIDATES: readonly CandidateProfile[] = [
   real("Stephen Hawking", ["man", "science", "historical", "europe", "born_before_1980"], 1.0),
   real("A. P. J. Abdul Kalam", ["man", "science", "historical", "india", "born_before_1980"], 1.05),
   real("Nikola Tesla", ["man", "science", "historical", "europe", "born_before_1980"], 0.95),
-  real("MrBeast", ["alive", "man", "internet", "creator", "usa", "born_after_1980"], 1.2),
+  real("MrBeast", ["alive", "man", "internet", "creator", "usa", "born_after_1980"], 1.25),
   real("PewDiePie", ["alive", "man", "internet", "creator", "europe", "born_after_1980"], 1.0),
-  real("Kai Cenat", ["alive", "man", "internet", "creator", "usa", "born_after_2000"], 0.9),
+  real("Kai Cenat", ["alive", "man", "internet", "creator", "usa", "born_after_2000"], 0.95),
   real("IShowSpeed", ["alive", "man", "internet", "creator", "usa", "born_after_2000"], 1.0),
-  real("CarryMinati", ["alive", "man", "internet", "creator", "india", "born_after_1980"], 0.95),
-  real("Bhuvan Bam", ["alive", "man", "internet", "creator", "india", "born_after_1980"], 0.9),
+  real("KSI", ["alive", "man", "internet", "creator", "music", "europe", "born_after_1980"], 0.95),
 
-  // Fictional: comics / film / books
-  fictional("Spider-Man", ["man", "superhero", "marvel", "comics"], 1.35),
-  fictional("Iron Man", ["man", "superhero", "marvel", "comics"], 1.3),
-  fictional("Captain America", ["man", "superhero", "marvel", "comics"], 1.05),
-  fictional("Thor", ["man", "superhero", "marvel", "comics"], 1.1),
-  fictional("Hulk", ["man", "superhero", "marvel", "comics"], 1.05),
-  fictional("Deadpool", ["man", "superhero", "marvel", "comics"], 1.0),
-  fictional("Thanos", ["man", "supervillain", "marvel", "comics"], 1.05),
-  fictional("Loki", ["man", "supervillain", "marvel", "comics"], 1.0),
-  fictional("Batman", ["man", "superhero", "dc", "comics"], 1.3),
-  fictional("Superman", ["man", "superhero", "dc", "comics"], 1.2),
-  fictional("Wonder Woman", ["woman", "superhero", "dc", "comics"], 1.05),
-  fictional("Joker", ["man", "supervillain", "dc", "comics"], 1.2),
-  fictional("Harry Potter", ["man", "books", "magic", "europe"], 1.25),
-  fictional("Hermione Granger", ["woman", "books", "magic", "europe"], 1.0),
-  fictional("Lord Voldemort", ["man", "books", "magic", "supervillain", "europe"], 1.0),
-  fictional("Sherlock Holmes", ["man", "books", "detective", "europe"], 1.0),
-  fictional("Wednesday Addams", ["woman", "tv", "gothic", "usa"], 0.95),
-  fictional("Darth Vader", ["man", "star_wars", "supervillain", "space"], 1.05),
-  fictional("Yoda", ["man", "star_wars", "space"], 0.9),
+  // Fictional: superhero / comics
+  fictional("Spider-Man", ["man", "superhero", "marvel", "comics", "movie", "fighter"], 1.35),
+  fictional("Iron Man", ["man", "superhero", "marvel", "comics", "movie", "tech", "fighter"], 1.25),
+  fictional("Captain America", ["man", "superhero", "marvel", "comics", "movie", "fighter"], 1.1),
+  fictional("Thor", ["man", "superhero", "marvel", "comics", "movie", "magic", "fighter"], 1.15),
+  fictional("Hulk", ["man", "superhero", "marvel", "comics", "movie", "fighter"], 1.05),
+  fictional("Thanos", ["man", "supervillain", "marvel", "comics", "movie", "space", "fighter"], 1.1),
+  fictional("Batman", ["man", "superhero", "dc", "comics", "movie", "detective", "fighter"], 1.3),
+  fictional("Superman", ["man", "superhero", "dc", "comics", "movie", "space", "fighter"], 1.25),
+  fictional("Wonder Woman", ["woman", "superhero", "dc", "comics", "movie", "fighter"], 1.1),
+  fictional("Joker", ["man", "supervillain", "dc", "comics", "movie"], 1.2),
 
-  // Anime
-  fictional("Naruto Uzumaki", ["man", "anime", "japan", "ninja"], 1.25),
-  fictional("Sasuke Uchiha", ["man", "anime", "japan", "ninja"], 1.0),
-  fictional("Goku", ["man", "anime", "japan", "fighter"], 1.25),
-  fictional("Vegeta", ["man", "anime", "japan", "fighter"], 1.0),
-  fictional("Monkey D. Luffy", ["man", "anime", "japan", "pirate"], 1.2),
-  fictional("Roronoa Zoro", ["man", "anime", "japan", "pirate"], 0.95),
-  fictional("Satoru Gojo", ["man", "anime", "japan", "magic"], 1.05),
-  fictional("Ryomen Sukuna", ["man", "anime", "japan", "supervillain", "magic"], 0.9),
-  fictional("Eren Yeager", ["man", "anime", "japan"], 0.95),
-  fictional("Tanjiro Kamado", ["man", "anime", "japan", "fighter"], 0.9),
-
-  // Games / animation
-  fictional("Mario", ["man", "video_game", "animated"], 1.15),
-  fictional("Sonic the Hedgehog", ["man", "video_game", "animated"], 1.05),
-  fictional("Kratos", ["man", "video_game", "fighter"], 1.0),
-  fictional("Lara Croft", ["woman", "video_game"], 0.9),
-  fictional("Mickey Mouse", ["man", "animated", "cartoon"], 1.05),
-  fictional("SpongeBob SquarePants", ["man", "animated", "cartoon"], 1.15),
-  fictional("Shrek", ["man", "animated", "movie"], 1.1),
-  fictional("Elsa", ["woman", "animated", "movie", "magic"], 1.0),
-  fictional("Woody", ["man", "animated", "movie"], 0.9),
-  fictional("Buzz Lightyear", ["man", "animated", "movie", "space"], 0.9),
-  fictional("Scooby-Doo", ["animated", "cartoon", "detective"], 0.9),
-  fictional("Tom", ["man", "animated", "cartoon"], 0.9),
-  fictional("Jerry", ["man", "animated", "cartoon"], 0.9),
+  // Fictional: anime / games / general pop culture
+  fictional("Goku", ["man", "anime", "japan", "fighter", "space"], 1.25),
+  fictional("Vegeta", ["man", "anime", "japan", "fighter", "space"], 1.0),
+  fictional("Naruto Uzumaki", ["man", "anime", "japan", "ninja", "fighter"], 1.2),
+  fictional("Monkey D. Luffy", ["man", "anime", "japan", "pirate", "fighter"], 1.2),
+  fictional("Satoru Gojo", ["man", "anime", "japan", "magic", "fighter"], 1.0),
+  fictional("Pikachu", ["anime", "japan", "video_game", "animated"], 1.15),
+  fictional("Mario", ["man", "video_game", "animated"], 1.2),
+  fictional("Sonic the Hedgehog", ["video_game", "animated"], 1.05),
+  fictional("Kratos", ["man", "video_game", "fighter", "magic"], 1.0),
+  fictional("Harry Potter", ["man", "books", "movie", "magic"], 1.25),
+  fictional("Hermione Granger", ["woman", "books", "movie", "magic"], 1.05),
+  fictional("Darth Vader", ["man", "movie", "space", "star_wars", "fighter"], 1.2),
+  fictional("Sherlock Holmes", ["man", "books", "detective", "movie", "tv"], 1.15),
+  fictional("Wednesday Addams", ["woman", "tv", "movie"], 1.0),
+  fictional("Homer Simpson", ["man", "cartoon", "animated", "tv"], 1.05),
+  fictional("Mickey Mouse", ["cartoon", "animated", "movie"], 1.1),
+  fictional("Shrek", ["animated", "movie"], 1.0),
 ];
