@@ -1,11 +1,17 @@
 import type { CandidateProfile } from "@/lib/engine/candidates";
-import { getGuessConfidenceThreshold } from "@/lib/game/guess-policy";
+import {
+  canGiveUp,
+  getGuessConfidenceThreshold,
+  hasEnoughConfirmationEvidence,
+  normalizeGuess,
+} from "@/lib/game/guess-policy";
 import { selectRecoveryQuestion } from "@/lib/engine/recovery-question";
 import {
   analyzeCandidates,
   mergeCandidatePools,
   SEED_CANDIDATES,
   selectBestQuestion,
+  selectConfirmationQuestion,
   summarizeAnalysis,
   topCandidateNames,
   type CandidateAnalysis,
@@ -45,18 +51,6 @@ function shouldAttemptKnowledgeDiscovery(
   return history.length >= 8;
 }
 
-/**
- * Hybrid deduction engine:
- * 1) deterministic Bayesian-style ranking over a bundled hot pool,
- * 2) optional live verified-candidate discovery when enough evidence exists,
- * 3) entropy-based question selection over the combined pool,
- * 4) configured LLM recovery for semantic/long-tail gaps.
- *
- * This class intentionally contains no server-only/network import. Production
- * wires the Wikimedia adapter from config.server.ts, while unit tests can inject
- * a deterministic discovery function. External outages never end a playable
- * round while useful structured/recovery questions remain.
- */
 export class HybridProvider implements AIProvider {
   readonly name: AIProvider["name"];
 
@@ -114,23 +108,44 @@ export class HybridProvider implements AIProvider {
       const threshold = getGuessConfidenceThreshold(context.history.length);
       const top = analysis.ranked[0];
       const enoughSeparation =
-        analysis.topProbability >= 0.52 &&
-        analysis.margin >= 0.18 &&
-        analysis.recognizedAnswers >= 5;
-
-      if (
+        analysis.topProbability >= 0.55 &&
+        analysis.margin >= 0.2 &&
+        analysis.recognizedAnswers >= 6;
+      const strongLead =
         top &&
         threshold !== null &&
         analysis.confidence >= threshold &&
-        enoughSeparation
-      ) {
-        return {
-          type: "guess",
-          name: top.candidate.name,
-          confidence: analysis.confidence,
-          memorySummary,
-          candidateHypotheses: hypotheses,
-        };
+        enoughSeparation;
+
+      if (strongLead && top) {
+        if (hasEnoughConfirmationEvidence(context.history, top.candidate.name)) {
+          return {
+            type: "guess",
+            name: top.candidate.name,
+            confidence: analysis.confidence,
+            memorySummary,
+            candidateHypotheses: hypotheses,
+          };
+        }
+
+        const confirmation = selectConfirmationQuestion(
+          context.history,
+          context.rejectedGuesses,
+          candidatePool,
+        );
+        if (
+          confirmation &&
+          normalizeGuess(confirmation.candidateName) === normalizeGuess(top.candidate.name)
+        ) {
+          return {
+            type: "question",
+            question: confirmation.question.text,
+            questionId: confirmation.question.id,
+            confidence: analysis.confidence,
+            memorySummary: `${memorySummary} A strong lead exists, but SBD is verifying it before spending a guess.`.slice(0, 1_200),
+            candidateHypotheses: hypotheses,
+          };
+        }
       }
     }
 
@@ -152,9 +167,6 @@ export class HybridProvider implements AIProvider {
       }
     }
 
-    // The LLM is a recovery layer, not the knowledge base. Candidate hypotheses
-    // include verified live discoveries when available, giving it a compact
-    // shortlist without delegating confidence/calibration to the model.
     const escapeNote = rejectedLocalGuess
       ? "A previous guess was rejected. Explore beyond that candidate and trust the full answer history."
       : discovery?.candidates.length
@@ -181,9 +193,58 @@ export class HybridProvider implements AIProvider {
         },
       });
 
-      return fallbackResult.type === "guess"
-        ? calibrateFallbackGuess(fallbackResult, context)
-        : fallbackResult;
+      if (fallbackResult.type === "give_up" && !canGiveUp(context.history)) {
+        const next = selectBestQuestion(context.history, context.rejectedGuesses, candidatePool);
+        const recovery = selectRecoveryQuestion(context.history);
+        const question = next?.question ?? (recovery
+          ? { id: recovery.questionId, text: recovery.question }
+          : null);
+        if (question) {
+          return {
+            type: "question",
+            question: question.text,
+            questionId: question.id,
+            confidence: analysis.confidence,
+            memorySummary: `${memorySummary} The long-tail search is not exhausted yet.`.slice(0, 1_200),
+            candidateHypotheses: hypotheses,
+          };
+        }
+      }
+
+      if (fallbackResult.type === "guess") {
+        const calibrated = calibrateFallbackGuess(fallbackResult, context);
+        if (hasEnoughConfirmationEvidence(context.history, calibrated.name)) {
+          return calibrated;
+        }
+
+        // For a structured top candidate, keep the suspected name internal and
+        // verify it with a discriminating trait instead of burning a guess.
+        const top = analysis.ranked[0];
+        if (top && normalizeGuess(top.candidate.name) === normalizeGuess(calibrated.name)) {
+          const confirmation = selectConfirmationQuestion(
+            context.history,
+            context.rejectedGuesses,
+            candidatePool,
+          );
+          if (confirmation) {
+            return {
+              type: "question",
+              question: confirmation.question.text,
+              questionId: confirmation.question.id,
+              confidence: Math.min(calibrated.confidence, analysis.confidence),
+              memorySummary: `${memorySummary} SBD has a lead and is verifying it before revealing the name.`.slice(0, 1_200),
+              candidateHypotheses: [calibrated.name, ...hypotheses.filter((name) => normalizeGuess(name) !== normalizeGuess(calibrated.name))].slice(0, 8),
+            };
+          }
+        }
+
+        // Rare LLM-only candidates are passed to the semantic validator. If the
+        // confirmation policy is not satisfied, the validator sends a correction
+        // and the model must ask another candidate-discriminating question.
+        return calibrated;
+      }
+
+      return fallbackResult;
     } catch (error) {
       if (!isRecoverableProviderFailure(error)) {
         throw error;
@@ -195,8 +256,6 @@ export class HybridProvider implements AIProvider {
         knowledgeCandidates: discovery?.candidates.length ?? 0,
       });
 
-      // Re-enter the combined structured pool even if the policy previously
-      // wanted to escape it. This keeps upstream AI failures invisible to users.
       const structuredNext = selectBestQuestion(
         context.history,
         context.rejectedGuesses,
@@ -225,9 +284,16 @@ export class HybridProvider implements AIProvider {
         };
       }
 
+      if (!canGiveUp(context.history)) {
+        throw new AIError(
+          "AI_UNAVAILABLE",
+          "The long-tail detector is still searching. Try this turn again.",
+        );
+      }
+
       return {
         type: "give_up",
-        message: "You survived every clue I had. Who were you thinking of?",
+        message: "You survived the full investigation. Alright, drop the name — who was it?",
         confidence: 0,
         memorySummary,
       };
@@ -244,11 +310,6 @@ function isRecoverableProviderFailure(error: unknown): error is AIError {
   );
 }
 
-/**
- * LLM confidence is not a calibrated probability. We therefore treat it only as
- * an upper-bound hint and cap it by evidence depth. The normal server-side guess
- * policy still validates the returned value after this function runs.
- */
 export function calibrateFallbackGuess(
   guess: GuessAIResponse,
   context: Pick<AIProviderContext, "history" | "rejectedGuesses">,
@@ -256,14 +317,13 @@ export function calibrateFallbackGuess(
   const answers = context.history.length;
 
   let evidenceCap: number;
-  if (answers <= 5) evidenceCap = 0.96;
-  else if (answers <= 8) evidenceCap = 0.92;
-  else if (answers <= 10) evidenceCap = 0.94;
-  else if (answers <= 15) evidenceCap = 0.87;
-  else if (answers <= 20) evidenceCap = 0.9;
-  else evidenceCap = 0.82;
+  if (answers <= 7) evidenceCap = 0.93;
+  else if (answers <= 12) evidenceCap = 0.94;
+  else if (answers <= 18) evidenceCap = 0.9;
+  else if (answers <= 24) evidenceCap = 0.88;
+  else evidenceCap = 0.84;
 
-  const rejectionPenalty = Math.min(0.09, context.rejectedGuesses.length * 0.025);
+  const rejectionPenalty = Math.min(0.12, context.rejectedGuesses.length * 0.035);
   const calibrated = Math.max(0, Math.min(guess.confidence, evidenceCap) - rejectionPenalty);
 
   return {
