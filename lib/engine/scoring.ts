@@ -21,7 +21,10 @@ export interface CandidateAnalysis {
 }
 
 const EPSILON = 1e-12;
-const ALL_CANDIDATES = [...CANDIDATES, ...EXTRA_CANDIDATES] as const;
+export const SEED_CANDIDATES: readonly CandidateProfile[] = [
+  ...CANDIDATES,
+  ...EXTRA_CANDIDATES,
+];
 
 function clamp(value: number, min = 0, max = 1): number {
   return Math.min(max, Math.max(min, value));
@@ -42,7 +45,7 @@ function answerLikelihood(answer: AnswerType, expected: boolean): number {
   }
 }
 
-function normalizedGuess(name: string): string {
+export function normalizeCandidateName(name: string): string {
   return name
     .normalize("NFKD")
     .toLocaleLowerCase("en-US")
@@ -52,19 +55,58 @@ function normalizedGuess(name: string): string {
     .replace(/\s+/g, " ");
 }
 
+/**
+ * Merge candidate pools without allowing live discovery to duplicate a bundled
+ * seed candidate. The higher prior wins and structured tags are unioned.
+ */
+export function mergeCandidatePools(
+  ...pools: readonly (readonly CandidateProfile[])[]
+): CandidateProfile[] {
+  const merged = new Map<string, CandidateProfile>();
+
+  for (const pool of pools) {
+    for (const candidate of pool) {
+      const key = normalizeCandidateName(candidate.name);
+      const existing = merged.get(key);
+      if (!existing) {
+        merged.set(key, candidate);
+        continue;
+      }
+
+      merged.set(key, {
+        ...candidate,
+        ...existing,
+        tags: [...new Set([...existing.tags, ...candidate.tags])],
+        prior: Math.max(existing.prior ?? 1, candidate.prior ?? 1),
+        popularityScore: Math.max(
+          existing.popularityScore ?? 0,
+          candidate.popularityScore ?? 0,
+        ),
+        source: existing.source === "seed" ? "seed" : candidate.source ?? existing.source,
+        sourceId: existing.sourceId ?? candidate.sourceId,
+        wikipediaTitle: existing.wikipediaTitle ?? candidate.wikipediaTitle,
+        description: existing.description ?? candidate.description,
+      });
+    }
+  }
+
+  return [...merged.values()];
+}
+
 export function analyzeCandidates(
   history: readonly GameAnswer[],
   rejectedGuesses: readonly string[] = [],
+  candidates: readonly CandidateProfile[] = SEED_CANDIDATES,
 ): CandidateAnalysis {
-  const rejected = new Set(rejectedGuesses.map(normalizedGuess));
+  const rejected = new Set(rejectedGuesses.map(normalizeCandidateName));
   const recognized = history
     .map((answer) => ({ answer, question: QUESTION_BY_ID.get(answer.questionId) }))
     .filter((entry): entry is { answer: GameAnswer; question: TraitQuestion } => Boolean(entry.question));
 
-  const scored = ALL_CANDIDATES
-    .filter((candidate) => !rejected.has(normalizedGuess(candidate.name)))
+  const scored = candidates
+    .filter((candidate) => !rejected.has(normalizeCandidateName(candidate.name)))
     .map((candidate) => {
-      let logScore = Math.log(candidate.prior ?? 1);
+      let logScore = Math.log(Math.max(candidate.prior ?? 1, 0.05));
       for (const { answer, question } of recognized) {
         const expected = candidate.tags.includes(question.tag);
         logScore += Math.log(answerLikelihood(answer.answer, expected) + EPSILON);
@@ -105,7 +147,7 @@ export function analyzeCandidates(
   const unknownPenalty = clamp(history.filter((entry) => entry.answer === "unknown").length / 10) * 0.16;
 
   // This is a game-confidence heuristic derived from the posterior distribution,
-  // margin, and amount of structured evidence. It is not supplied by an LLM.
+  // margin, and amount of structured evidence. It is never supplied by an LLM.
   const confidence = clamp(
     topProbability * 0.72 + margin * 0.34 + evidenceFactor * 0.18 - unknownPenalty,
   );
@@ -129,8 +171,9 @@ function binaryEntropy(probability: number): number {
 export function selectBestQuestion(
   history: readonly GameAnswer[],
   rejectedGuesses: readonly string[] = [],
+  candidates: readonly CandidateProfile[] = SEED_CANDIDATES,
 ): { question: TraitQuestion; informationGain: number } | null {
-  const analysis = analyzeCandidates(history, rejectedGuesses);
+  const analysis = analyzeCandidates(history, rejectedGuesses, candidates);
   if (analysis.ranked.length < 2) return null;
 
   const askedIds = new Set(history.map((entry) => entry.questionId));
@@ -162,6 +205,6 @@ export function topCandidateNames(analysis: CandidateAnalysis, limit = 8): strin
 
 export function summarizeAnalysis(analysis: CandidateAnalysis): string {
   const top = topCandidateNames(analysis, 4);
-  if (top.length === 0) return "The deterministic candidate pool has no viable candidates.";
-  return `Structured evidence matched ${analysis.recognizedAnswers} question${analysis.recognizedAnswers === 1 ? "" : "s"}. Current local shortlist: ${top.join(", ")}.`;
+  if (top.length === 0) return "The structured candidate pool has no viable candidates.";
+  return `Structured evidence matched ${analysis.recognizedAnswers} question${analysis.recognizedAnswers === 1 ? "" : "s"}. Current shortlist: ${top.join(", ")}.`;
 }
