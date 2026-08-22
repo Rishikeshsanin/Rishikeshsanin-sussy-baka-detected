@@ -15,6 +15,7 @@ import { buildKnowledgeSearchPlan, type KnowledgeSearchPlan } from "./query";
 import { discoverWikimediaCandidates } from "./wikimedia.server";
 
 const DISCOVERY_TIMEOUT_MS = 5_200;
+const PERSISTENCE_READ_BUDGET_MS = 450;
 const MAX_COMBINED_CANDIDATES = 40;
 
 export interface KnowledgeDiscovery {
@@ -55,6 +56,22 @@ function mergeCandidates(...groups: readonly CandidateProfile[][]): CandidatePro
   return [...merged.values()].slice(0, MAX_COMBINED_CANDIDATES);
 }
 
+async function readPersistenceWithinBudget(
+  cacheKey: string,
+  plan: KnowledgeSearchPlan,
+): Promise<[CandidateProfile[] | null, CandidateProfile[]]> {
+  const lookup = Promise.all([
+    getPersistentSearchCandidates(cacheKey),
+    getLearnedCandidates(plan),
+  ]) as Promise<[CandidateProfile[] | null, CandidateProfile[]]>;
+
+  const deadline = new Promise<[null, CandidateProfile[]]>((resolve) => {
+    setTimeout(() => resolve([null, []]), PERSISTENCE_READ_BUDGET_MS);
+  });
+
+  return Promise.race([lookup, deadline]);
+}
+
 export async function discoverKnowledgeCandidates(
   history: readonly GameAnswer[],
   signal?: AbortSignal,
@@ -70,10 +87,7 @@ export async function discoverKnowledgeCandidates(
   const cacheKey = knowledgeCacheKey(plan.primaryQuery, plan.secondaryQuery);
 
   try {
-    const [persistedSearch, learned] = await Promise.all([
-      getPersistentSearchCandidates(cacheKey),
-      getLearnedCandidates(plan),
-    ]);
+    const [persistedSearch, learned] = await readPersistenceWithinBudget(cacheKey, plan);
 
     if (persistedSearch) {
       cacheCandidates(cacheKey, persistedSearch);
