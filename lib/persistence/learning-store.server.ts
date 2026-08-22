@@ -42,7 +42,7 @@ export async function recordLearningEvent(input: LearningEventInput): Promise<bo
   if (!canonicalName || !normalizedName) return false;
 
   const evidence = Math.min(30, input.history.length);
-  const historyJson = JSON.stringify(minimizedHistory(input.history));
+  const historyPayload = minimizedHistory(input.history);
   const rejected = input.rejectedGuesses.slice(0, 20).map((guess) => guess.slice(0, 100));
 
   try {
@@ -63,7 +63,7 @@ export async function recordLearningEvent(input: LearningEventInput): Promise<bo
           ${canonicalName},
           ${normalizedName},
           ${tx.array(rejected)}::text[],
-          ${historyJson}::jsonb,
+          ${tx.json(historyPayload)},
           ${evidence},
           'knowledge-v1-persistent'
         )
