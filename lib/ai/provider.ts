@@ -1,4 +1,9 @@
-import { getGuessConfidenceThreshold } from "@/lib/game/guess-policy";
+import {
+  canGiveUp,
+  getGuessConfidenceThreshold,
+  hasEnoughConfirmationEvidence,
+  minimumGiveUpAnswers,
+} from "@/lib/game/guess-policy";
 import { isDuplicateQuestion } from "@/lib/game/question-normalization";
 
 import {
@@ -10,6 +15,7 @@ import {
   AIError,
   type AIProvider,
   type GameAIResponse,
+  type GiveUpAIResponse,
   type GuessAIResponse,
   type QuestionAIResponse,
   type TurnRequest,
@@ -79,13 +85,9 @@ export function validateResponseSemantics(
   response: GameAIResponse,
   request: TurnRequest,
 ): SemanticIssue | null {
-  if (response.type === "question") {
-    return validateQuestion(response, request);
-  }
-  if (response.type === "guess") {
-    return validateGuess(response, request);
-  }
-  return null;
+  if (response.type === "question") return validateQuestion(response, request);
+  if (response.type === "guess") return validateGuess(response, request);
+  return validateGiveUp(response, request);
 }
 
 export const guessConfidenceThreshold = getGuessConfidenceThreshold;
@@ -132,6 +134,17 @@ function validateQuestion(
   return null;
 }
 
+function hasStableLongTailEvidence(response: GuessAIResponse, request: TurnRequest): boolean {
+  const previousLead = request.aiMemory.candidateHypotheses[0];
+  if (!previousLead || canonicalizeGuess(previousLead) !== canonicalizeGuess(response.name)) {
+    return false;
+  }
+
+  if (request.history.length < 14 || response.confidence < 0.9) return false;
+  const recent = request.history.slice(-3);
+  return recent.length === 3 && recent.every((entry) => entry.answer !== "unknown");
+}
+
 function validateGuess(
   response: GuessAIResponse,
   request: TurnRequest,
@@ -163,12 +176,35 @@ function validateGuess(
       publicMessage: "The deduction engine tried to guess before it had enough evidence.",
       correction:
         threshold === null
-          ? "Return a useful QUESTION instead of a guess at this point in the game."
-          : `A guess after ${request.history.length} completed answers requires confidence >= ${threshold.toFixed(2)}. Return a useful QUESTION unless a different candidate genuinely clears that threshold.`,
+          ? "Do not reveal a name yet. Return a useful candidate-discriminating QUESTION instead."
+          : `A guess after ${request.history.length} completed answers requires confidence >= ${threshold.toFixed(2)}. Return a useful QUESTION unless a candidate genuinely clears that threshold.`,
+    };
+  }
+
+  const structuredConfirmation = hasEnoughConfirmationEvidence(request.history, response.name);
+  const longTailConfirmation = hasStableLongTailEvidence(response, request);
+  if (!structuredConfirmation && !longTailConfirmation) {
+    return {
+      publicMessage: "The deduction engine tried to reveal a strong lead before confirming it.",
+      correction:
+        `You may have the right candidate, but do NOT guess yet. Ask another concise fact-based QUESTION that this suspected candidate should satisfy and that distinguishes close alternatives. Keep the suspected candidate first in candidateHypotheses. SBD prefers confirmation over a failed guess.`,
     };
   }
 
   return null;
+}
+
+function validateGiveUp(
+  _response: GiveUpAIResponse,
+  request: TurnRequest,
+): SemanticIssue | null {
+  if (canGiveUp(request.history)) return null;
+
+  return {
+    publicMessage: "The deduction engine gave up while useful investigation time remained.",
+    correction:
+      `Do not GIVE_UP yet. This round should continue to at least ${minimumGiveUpAnswers(request.history)} answered questions unless the server reaches its hard limit. Ask the single most useful new yes/no QUESTION, explore a new category/franchise/geography if needed, and use UNKNOWN answers as neutral evidence.`,
+  };
 }
 
 async function callProviderWithTimeout(
@@ -193,25 +229,21 @@ async function callProviderWithTimeout(
       timeoutPromise,
     ]);
   } finally {
-    if (timeout) {
-      clearTimeout(timeout);
-    }
+    if (timeout) clearTimeout(timeout);
   }
 }
 
 export function createMaxQuestionsGiveUp(request: TurnRequest): GameAIResponse {
   return {
     type: "give_up",
-    message: "You got me this time. Who were you thinking of?",
+    message: "Thirty questions. You actually survived the detector. Fine — drop the name. Who was it? 💀",
     confidence: 0,
     memorySummary:
-      request.aiMemory.summary || "Thirty questions were answered without one reliable candidate.",
+      request.aiMemory.summary || "Thirty questions were answered without one reliable confirmed candidate.",
   };
 }
 
 function toAIError(error: unknown): AIError {
-  if (error instanceof AIError) {
-    return error;
-  }
+  if (error instanceof AIError) return error;
   return new AIError("INTERNAL_ERROR", "The deduction engine could not complete this turn.");
 }

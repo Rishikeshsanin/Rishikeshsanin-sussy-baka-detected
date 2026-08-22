@@ -53,6 +53,42 @@ describe("playValidatedTurn", () => {
     expect(provider.contexts).toHaveLength(2);
   });
 
+  it("turns an unconfirmed strong lead into another question", async () => {
+    const history = Array.from({ length: 8 }, (_, index) => ({
+      questionId: `evidence-${index + 1}`,
+      question: `Is evidence clue ${index + 1} true?`,
+      answer: "yes" as const,
+      timestamp: index + 1,
+    }));
+    const provider = new SequenceProvider([
+      guess("Pat Cummins", 0.99),
+      question("confirm-bowling-style", "Is your person primarily known as a bowler?"),
+    ]);
+
+    await expect(
+      playValidatedTurn(provider, request({ history, questionNumber: 8 })),
+    ).resolves.toMatchObject({ type: "question", questionId: "confirm-bowling-style" });
+    expect(provider.contexts[1]?.correction).toMatch(/do NOT guess yet/i);
+  });
+
+  it("does not allow an early give-up on a long-tail round", async () => {
+    const history = Array.from({ length: 12 }, (_, index) => ({
+      questionId: `long-tail-${index + 1}`,
+      question: `Is long-tail clue ${index + 1} true?`,
+      answer: "unknown" as const,
+      timestamp: index + 1,
+    }));
+    const provider = new SequenceProvider([
+      giveUp(),
+      question("keep-searching", "Is your character part of a long-running franchise?"),
+    ]);
+
+    await expect(
+      playValidatedTurn(provider, request({ history, questionNumber: 12 })),
+    ).resolves.toMatchObject({ type: "question", questionId: "keep-searching" });
+    expect(provider.contexts[1]?.correction).toMatch(/Do not GIVE_UP yet/i);
+  });
+
   it("never permits a rejected guess again", async () => {
     const provider = new SequenceProvider([
       guess("sherlock-holmes", 0.99),
@@ -97,14 +133,16 @@ describe("playValidatedTurn", () => {
 
 describe("guessConfidenceThreshold", () => {
   it.each([
-    [1, 0.98],
-    [5, 0.98],
-    [6, 0.94],
-    [10, 0.94],
-    [11, 0.84],
-    [20, 0.84],
-    [21, 0.7],
-  ])("uses the policy for %i completed questions", (questions, threshold) => {
+    [1, null],
+    [7, null],
+    [8, 0.95],
+    [12, 0.95],
+    [13, 0.88],
+    [20, 0.88],
+    [21, 0.82],
+    [25, 0.82],
+    [26, 0.76],
+  ])("uses the confirmation-first policy for %i completed questions", (questions, threshold) => {
     expect(guessConfidenceThreshold(questions)).toBe(threshold);
   });
 });
@@ -118,9 +156,7 @@ class SequenceProvider implements AIProvider {
   async playTurn(context: AIProviderContext): Promise<GameAIResponse> {
     this.contexts.push(context);
     const response = this.responses[Math.min(this.contexts.length - 1, this.responses.length - 1)];
-    if (!response) {
-      throw new Error("No fake response configured");
-    }
+    if (!response) throw new Error("No fake response configured");
     return response;
   }
 }
@@ -150,7 +186,7 @@ function question(questionId: string, text: string): GameAIResponse {
     questionId,
     question: text,
     confidence: 0.4,
-    memorySummary: "The character is likely fictional.",
+    memorySummary: "The detector is still narrowing the field.",
     candidateHypotheses: [],
   };
 }
@@ -160,7 +196,16 @@ function guess(name: string, confidence: number): GameAIResponse {
     type: "guess",
     name,
     confidence,
-    memorySummary: "A fictional detective from literature.",
+    memorySummary: "A strong candidate exists.",
     candidateHypotheses: [name],
+  };
+}
+
+function giveUp(): GameAIResponse {
+  return {
+    type: "give_up",
+    message: "I give up.",
+    confidence: 0,
+    memorySummary: "The candidate is obscure.",
   };
 }

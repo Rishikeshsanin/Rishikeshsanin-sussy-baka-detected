@@ -1,3 +1,5 @@
+import type { GameAnswer } from "@/lib/game/types";
+
 export interface TraitQuestion {
   id: string;
   text: string;
@@ -14,7 +16,6 @@ export const TRAIT_QUESTIONS: readonly TraitQuestion[] = [
   { id: "man", text: "Is your person a man?", tag: "man" },
   { id: "woman", text: "Is your person a woman?", tag: "woman" },
 
-  // Broad geography first; live discovery can then fan into current people.
   { id: "asia", text: "Is your person strongly associated with Asia?", tag: "asia" },
   { id: "europe", text: "Is your person strongly associated with Europe?", tag: "europe" },
   { id: "north-america", text: "Is your person strongly associated with North America?", tag: "north_america" },
@@ -22,7 +23,6 @@ export const TRAIT_QUESTIONS: readonly TraitQuestion[] = [
   { id: "africa", text: "Is your person strongly associated with Africa?", tag: "africa" },
   { id: "oceania", text: "Is your person strongly associated with Australia, New Zealand, or Oceania?", tag: "oceania" },
 
-  // High-frequency countries / regions.
   { id: "india", text: "Is your person strongly associated with India?", tag: "india" },
   { id: "usa", text: "Is your person strongly associated with the United States?", tag: "usa" },
   { id: "australia", text: "Is your person strongly associated with Australia?", tag: "australia" },
@@ -37,7 +37,6 @@ export const TRAIT_QUESTIONS: readonly TraitQuestion[] = [
   { id: "south-korea", text: "Is your person strongly associated with South Korea?", tag: "korea" },
   { id: "canada", text: "Is your person strongly associated with Canada?", tag: "canada" },
 
-  // Profession / fame domain.
   { id: "sports", text: "Is your person mainly famous for sports?", tag: "sports" },
   { id: "acting", text: "Is your person mainly known for acting?", tag: "acting" },
   { id: "music", text: "Is your person mainly known for music?", tag: "music" },
@@ -47,7 +46,6 @@ export const TRAIT_QUESTIONS: readonly TraitQuestion[] = [
   { id: "internet", text: "Did your person become famous mainly through the internet?", tag: "internet" },
   { id: "creator", text: "Is your person a major online creator or streamer?", tag: "creator" },
 
-  // Sports specializations.
   { id: "cricket", text: "Is your person famous for cricket?", tag: "cricket" },
   { id: "cricket-bowler", text: "Is your cricketer mainly known as a bowler?", tag: "bowler" },
   { id: "cricket-batter", text: "Is your cricketer mainly known as a batter?", tag: "batter" },
@@ -59,7 +57,6 @@ export const TRAIT_QUESTIONS: readonly TraitQuestion[] = [
   { id: "motorsport", text: "Is your person famous for motorsport?", tag: "motorsport" },
   { id: "combat-sports", text: "Is your person famous for boxing, MMA, or another combat sport?", tag: "combat_sports" },
 
-  // Entertainment / tech / historical specializations.
   { id: "bollywood", text: "Is your person strongly associated with Bollywood?", tag: "bollywood" },
   { id: "tollywood", text: "Is your person strongly associated with Telugu cinema?", tag: "tollywood" },
   { id: "south-cinema", text: "Is your person strongly associated with South Indian cinema?", tag: "south_cinema" },
@@ -70,7 +67,6 @@ export const TRAIT_QUESTIONS: readonly TraitQuestion[] = [
   { id: "born-after-1980", text: "Was your person born in 1980 or later?", tag: "born_after_1980" },
   { id: "born-after-2000", text: "Was your person born in 2000 or later?", tag: "born_after_2000" },
 
-  // Fictional-character branch.
   { id: "fictional", text: "Is your character fictional?", tag: "fictional" },
   { id: "superhero", text: "Is your character a superhero?", tag: "superhero" },
   { id: "supervillain", text: "Is your character mainly a villain?", tag: "supervillain" },
@@ -95,3 +91,63 @@ export const TRAIT_QUESTIONS: readonly TraitQuestion[] = [
 ];
 
 export const QUESTION_BY_ID = new Map(TRAIT_QUESTIONS.map((question) => [question.id, question]));
+
+const REAL_ONLY_IDS = new Set([
+  "alive", "asia", "europe", "north-america", "south-america", "africa", "oceania",
+  "india", "usa", "australia", "uk", "new-zealand", "pakistan", "south-africa",
+  "sri-lanka", "bangladesh", "west-indies", "japan-person", "south-korea", "canada",
+  "sports", "acting", "music", "politics", "business", "science", "internet", "creator",
+  "cricket", "football", "basketball", "tennis", "motorsport", "combat-sports",
+  "bollywood", "tollywood", "south-cinema", "hollywood", "tech", "historical",
+  "born-before-1980", "born-after-1980", "born-after-2000",
+]);
+
+const FICTIONAL_ONLY_IDS = new Set([
+  "superhero", "supervillain", "marvel", "dc", "comics", "books", "anime", "japan",
+  "video-game", "animated", "cartoon", "movie", "tv", "magic", "space", "star-wars",
+  "detective", "fighter", "ninja", "pirate",
+]);
+
+const SPORTS_CHILD_IDS = new Set(["cricket", "football", "basketball", "tennis", "motorsport", "combat-sports"]);
+const CRICKET_CHILD_IDS = new Set(["cricket-bowler", "cricket-batter", "cricket-all-rounder", "cricket-captain"]);
+const ACTING_CHILD_IDS = new Set(["bollywood", "tollywood", "south-cinema", "hollywood"]);
+
+const positive = (answer: GameAnswer["answer"] | undefined): boolean =>
+  answer === "yes" || answer === "probably";
+const negative = (answer: GameAnswer["answer"] | undefined): boolean =>
+  answer === "no" || answer === "probably_not";
+
+/** Prevents logically awkward questions once a branch has already been settled. */
+export function isTraitQuestionApplicable(
+  question: TraitQuestion,
+  history: readonly GameAnswer[],
+): boolean {
+  const answers = new Map(history.map((entry) => [entry.questionId, entry.answer]));
+  const realAnswer = answers.get("first-real-person");
+  const fictionalAnswer = answers.get("fictional");
+  const isReal = positive(realAnswer) || negative(fictionalAnswer);
+  const isFictional = negative(realAnswer) || positive(fictionalAnswer);
+
+  if (question.id === "first-real-person" && history.length > 0) return false;
+  if (question.id === "fictional" && (isReal || isFictional)) return false;
+  if (REAL_ONLY_IDS.has(question.id) && isFictional) return false;
+  if (FICTIONAL_ONLY_IDS.has(question.id) && isReal) return false;
+
+  if (question.id === "woman" && positive(answers.get("man"))) return false;
+  if (question.id === "man" && positive(answers.get("woman"))) return false;
+
+  if (SPORTS_CHILD_IDS.has(question.id) && negative(answers.get("sports"))) return false;
+  if (CRICKET_CHILD_IDS.has(question.id) && !positive(answers.get("cricket"))) return false;
+  if (ACTING_CHILD_IDS.has(question.id) && negative(answers.get("acting"))) return false;
+
+  // Once a parent is positively established, its sibling branches remain useful;
+  // when explicitly rejected, asking a specialization under it is not.
+  if (question.id === "sports" && ["cricket", "football", "basketball", "tennis", "motorsport", "combat-sports"].some((id) => positive(answers.get(id)))) {
+    return false;
+  }
+  if (question.id === "acting" && ["bollywood", "tollywood", "south-cinema", "hollywood"].some((id) => positive(answers.get(id)))) {
+    return false;
+  }
+
+  return true;
+}

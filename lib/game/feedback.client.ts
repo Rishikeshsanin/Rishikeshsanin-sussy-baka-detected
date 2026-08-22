@@ -4,21 +4,29 @@ import { loadGameState } from "./storage";
 
 export type GameFeedbackOutcome = "correct_guess" | "revealed_after_give_up";
 
-/**
- * Best-effort anonymous learning feedback. Gameplay never waits for this request.
- */
+export interface GameFeedbackResult {
+  accepted: boolean;
+  persisted: boolean;
+  learned?: boolean;
+  canonicalName?: string;
+  reason?: string;
+}
+
+/** Best-effort anonymous learning feedback. Gameplay never depends on persistence. */
 export async function submitCurrentGameFeedback(
   outcome: GameFeedbackOutcome,
   name: string,
-): Promise<void> {
+): Promise<GameFeedbackResult | null> {
   const state = loadGameState();
-  if (!state?.gameId || state.history.length === 0) return;
+  if (!state?.gameId || state.history.length === 0) return null;
 
   const canonicalName = name.trim().replace(/\s+/g, " ").slice(0, 100);
-  if (canonicalName.length < 2) return;
+  if (canonicalName.length < 2) return null;
 
   const marker = `sbd-feedback:${state.gameId}:${outcome}:${canonicalName.toLocaleLowerCase("en-US")}`;
-  if (typeof sessionStorage !== "undefined" && sessionStorage.getItem(marker)) return;
+  if (typeof sessionStorage !== "undefined" && sessionStorage.getItem(marker) === "saved") {
+    return { accepted: true, persisted: true };
+  }
   sessionStorage?.setItem(marker, "pending");
 
   try {
@@ -35,14 +43,17 @@ export async function submitCurrentGameFeedback(
       keepalive: true,
     });
 
-    const body = await response.json().catch(() => null) as { persisted?: boolean } | null;
-    if (!response.ok || body?.persisted !== true) {
+    const body = await response.json().catch(() => null) as GameFeedbackResult | null;
+    if (!response.ok || !body) {
       sessionStorage?.removeItem(marker);
-      return;
+      return null;
     }
 
-    sessionStorage?.setItem(marker, "saved");
+    if (body.persisted) sessionStorage?.setItem(marker, "saved");
+    else sessionStorage?.removeItem(marker);
+    return body;
   } catch {
     sessionStorage?.removeItem(marker);
+    return null;
   }
 }

@@ -7,13 +7,18 @@ import {
 } from "@/lib/game/guess-policy";
 
 describe("guess policy", () => {
-  it("uses the staged inclusive confidence thresholds", () => {
-    expect(getGuessConfidenceThreshold(1)).toBe(0.98);
-    expect(getGuessConfidenceThreshold(6)).toBe(0.94);
-    expect(getGuessConfidenceThreshold(11)).toBe(0.84);
-    expect(getGuessConfidenceThreshold(21)).toBe(0.7);
-    expect(canMakeGuess(6, 0.94)).toBe(true);
-    expect(canMakeGuess(6, 0.939)).toBe(false);
+  it("uses the confirmation-first confidence thresholds", () => {
+    expect(getGuessConfidenceThreshold(1)).toBeNull();
+    expect(getGuessConfidenceThreshold(7)).toBeNull();
+    expect(getGuessConfidenceThreshold(8)).toBe(0.95);
+    expect(getGuessConfidenceThreshold(12)).toBe(0.95);
+    expect(getGuessConfidenceThreshold(13)).toBe(0.88);
+    expect(getGuessConfidenceThreshold(20)).toBe(0.88);
+    expect(getGuessConfidenceThreshold(21)).toBe(0.82);
+    expect(getGuessConfidenceThreshold(25)).toBe(0.82);
+    expect(getGuessConfidenceThreshold(26)).toBe(0.76);
+    expect(canMakeGuess(8, 0.95)).toBe(true);
+    expect(canMakeGuess(8, 0.949)).toBe(false);
   });
 
   it("forbids zero-answer and maximum-question guesses", () => {

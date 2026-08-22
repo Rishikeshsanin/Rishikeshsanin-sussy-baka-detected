@@ -87,13 +87,7 @@ describe("HybridProvider", () => {
       candidateHypotheses: [],
     });
     const discover = vi.fn(async () => ({
-      plan: {
-        primaryQuery: "Australian cricketer captain bowler",
-        positiveTags: ["real", "man", "sports", "cricket", "australia", "bowler", "captain"],
-        negativeTags: [],
-        expectsRealPerson: true,
-        expectsFictionalCharacter: false,
-      },
+      plan: { primaryQuery: "Australian cricketer captain bowler" },
       candidates: [
         {
           name: "Live Cricket Candidate",
@@ -109,10 +103,7 @@ describe("HybridProvider", () => {
     const provider = new HybridProvider(fallback, discover);
 
     const result = await provider.playTurn(
-      context({
-        history: australianCricketHistory(),
-        questionNumber: 9,
-      }),
+      context({ history: australianCricketHistory(), questionNumber: 9 }),
     );
 
     expect(discover).toHaveBeenCalledTimes(1);
@@ -137,10 +128,7 @@ describe("HybridProvider", () => {
     const provider = new HybridProvider(fallback);
 
     const result = await provider.playTurn(
-      context({
-        rejectedGuesses: ["Virat Kohli"],
-        turnReason: "rejected_guess",
-      }),
+      context({ rejectedGuesses: ["Virat Kohli"], turnReason: "rejected_guess" }),
     );
 
     expect(result.type).toBe("question");
@@ -162,7 +150,7 @@ describe("HybridProvider", () => {
       { history: historyOfLength(5), rejectedGuesses: [] },
     );
 
-    expect(calibrated.confidence).toBe(0.96);
+    expect(calibrated.confidence).toBe(0.93);
   });
 
   it("penalizes fallback confidence after rejected guesses", () => {
@@ -180,6 +168,6 @@ describe("HybridProvider", () => {
       },
     );
 
-    expect(calibrated.confidence).toBe(0.85);
+    expect(calibrated.confidence).toBe(0.83);
   });
 });
