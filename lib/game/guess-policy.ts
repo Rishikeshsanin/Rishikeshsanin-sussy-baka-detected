@@ -24,10 +24,7 @@ export function getGuessConfidenceThreshold(answerCount: number): number | null 
 }
 
 export function canMakeGuess(answerCount: number, confidence: number): boolean {
-  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
-    return false;
-  }
-
+  if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) return false;
   const threshold = getGuessConfidenceThreshold(answerCount);
   return threshold !== null && confidence >= threshold;
 }
@@ -48,22 +45,30 @@ function confirmationSlug(name: string): string {
     .slice(0, 28) || "candidate";
 }
 
-export function makeConfirmationQuestionId(candidateName: string, baseQuestionId: string): string {
-  const prefix = `${CONFIRMATION_PREFIX}${confirmationSlug(candidateName)}${CONFIRMATION_SEPARATOR}`;
+export function makeConfirmationQuestionId(
+  candidateName: string,
+  baseQuestionId: string,
+  expectedAnswer: boolean,
+): string {
+  const expectation = expectedAnswer ? "y" : "n";
+  const prefix = `${CONFIRMATION_PREFIX}${confirmationSlug(candidateName)}${CONFIRMATION_SEPARATOR}${expectation}${CONFIRMATION_SEPARATOR}`;
   return `${prefix}${baseQuestionId}`.slice(0, 80);
 }
 
 export function parseConfirmationQuestionId(
   questionId: string,
-): { candidateSlug: string; baseQuestionId: string } | null {
+): { candidateSlug: string; expectedAnswer: boolean; baseQuestionId: string } | null {
   if (!questionId.startsWith(CONFIRMATION_PREFIX)) return null;
-  const separatorIndex = questionId.indexOf(CONFIRMATION_SEPARATOR, CONFIRMATION_PREFIX.length);
-  if (separatorIndex < 0) return null;
+  const first = questionId.indexOf(CONFIRMATION_SEPARATOR, CONFIRMATION_PREFIX.length);
+  if (first < 0) return null;
+  const second = questionId.indexOf(CONFIRMATION_SEPARATOR, first + CONFIRMATION_SEPARATOR.length);
+  if (second < 0) return null;
 
-  const candidateSlug = questionId.slice(CONFIRMATION_PREFIX.length, separatorIndex);
-  const baseQuestionId = questionId.slice(separatorIndex + CONFIRMATION_SEPARATOR.length);
-  if (!candidateSlug || !baseQuestionId) return null;
-  return { candidateSlug, baseQuestionId };
+  const candidateSlug = questionId.slice(CONFIRMATION_PREFIX.length, first);
+  const expectation = questionId.slice(first + CONFIRMATION_SEPARATOR.length, second);
+  const baseQuestionId = questionId.slice(second + CONFIRMATION_SEPARATOR.length);
+  if (!candidateSlug || !baseQuestionId || (expectation !== "y" && expectation !== "n")) return null;
+  return { candidateSlug, expectedAnswer: expectation === "y", baseQuestionId };
 }
 
 export function isConfirmationQuestionForCandidate(questionId: string, candidateName: string): boolean {
@@ -80,10 +85,17 @@ export function candidateConfirmationEvidence(
   let unknown = 0;
 
   for (const entry of history) {
-    if (!isConfirmationQuestionForCandidate(entry.questionId, candidateName)) continue;
-    if (entry.answer === "yes" || entry.answer === "probably") positive += 1;
-    else if (entry.answer === "no" || entry.answer === "probably_not") negative += 1;
-    else unknown += 1;
+    const parsed = parseConfirmationQuestionId(entry.questionId);
+    if (!parsed || parsed.candidateSlug !== confirmationSlug(candidateName)) continue;
+    if (entry.answer === "unknown") {
+      unknown += 1;
+      continue;
+    }
+
+    const userPositive = entry.answer === "yes" || entry.answer === "probably";
+    const agrees = parsed.expectedAnswer ? userPositive : !userPositive;
+    if (agrees) positive += 1;
+    else negative += 1;
   }
 
   return { positive, negative, unknown };
