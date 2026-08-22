@@ -4,11 +4,11 @@ type FocusMeterProps = {
 };
 
 function getFocusLabel(confidence: number) {
-  if (confidence < 0.22) return "Reading the outline";
-  if (confidence < 0.48) return "Clues are forming";
-  if (confidence < 0.72) return "Closing in";
-  if (confidence < 0.9) return "A strong theory";
-  return "Almost certain";
+  if (confidence < 0.22) return "barely any lore";
+  if (confidence < 0.48) return "signal forming";
+  if (confidence < 0.72) return "getting suspicious";
+  if (confidence < 0.9) return "bro is nearly clocked";
+  return "critical sus";
 }
 
 export function FocusMeter({ confidence, compact = false }: FocusMeterProps) {
@@ -18,13 +18,13 @@ export function FocusMeter({ confidence, compact = false }: FocusMeterProps) {
   return (
     <div className={compact ? "w-full max-w-[12rem]" : "w-full"}>
       <div className="mb-2 flex items-center justify-between gap-4">
-        <span className="text-[0.63rem] font-semibold uppercase tracking-[0.22em] text-white/42">Focus</span>
-        <span className="text-[0.7rem] font-medium text-violet-100/62">{label}</span>
+        <span className="text-[0.63rem] font-semibold uppercase tracking-[0.22em] text-white/42">Sus signal</span>
+        <span className="text-[0.7rem] font-medium text-lime-100/62">{label}</span>
       </div>
       <div
         className="focus-track"
         role="progressbar"
-        aria-label={`Oracle focus: ${label}`}
+        aria-label={`Detector confidence: ${label}`}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(safeConfidence * 100)}
